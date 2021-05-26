@@ -122,6 +122,13 @@
                     :label (tr "auth.terms-privacy-agreement")
                     :type "checkbox"}]]
 
+     [:div.fields-row
+      [:& fm/input {:name :terms-privacy
+                    :class "check-primary"
+                    :tab-index "5"
+                    :label (tr "auth.newsletter-terms")
+                    :type "checkbox"}]]
+
      [:& fm/submit-button
       {:label (tr "auth.register-submit")
        :disabled @submitted?}]]))

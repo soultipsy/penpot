@@ -164,6 +164,11 @@ msgstr ""
 "policy."
 
 #: src/app/main/ui/auth/register.cljs
+msgid "auth.newsletter-terms"
+msgstr ""
+"I agree to join Penpot's mailing list"
+
+#: src/app/main/ui/auth/register.cljs
 msgid "auth.verification-email-sent"
 msgstr "We've sent a verification email to"
 

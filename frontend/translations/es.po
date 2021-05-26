@@ -168,6 +168,11 @@ msgstr ""
 "de privacidad."
 
 #: src/app/main/ui/auth/register.cljs
+msgid "auth.newsletter-terms"
+msgstr ""
+"Acepto unirme a la lista de correo de Penpot"
+
+#: src/app/main/ui/auth/register.cljs
 msgid "auth.verification-email-sent"
 msgstr "Hemos enviado un email de verificación a"
 
