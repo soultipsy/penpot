@@ -6,6 +6,7 @@
 
 (ns app.common.geom.shapes.transforms
   (:require
+    [cuerdas.core :as str] ;; TODO quitar cuando tenga los atributos de verdad
    [app.common.attrs :as attrs]
    [app.common.data :as d]
    [app.common.geom.matrix :as gmt]
@@ -366,39 +367,68 @@
   [parent transformed-parent child parent-modifiers]
   (let [parent-rect             (:selrect parent)
         transformed-parent-rect (:selrect transformed-parent)
-        child-rect              (:selrect child)]
+        child-rect              (:selrect child)
 
-    (case (:name child)
-      "topleft"
-      {}
+        delta (gpt/point (- (:width transformed-parent-rect)
+                            (:width parent-rect))
+                         (- (:height transformed-parent-rect)
+                            (:height parent-rect)))
 
-      "bottomright"
-      (let [delta (gpt/point (- (:width transformed-parent-rect)
-                                (:width parent-rect))
-                             (- (:height transformed-parent-rect)
-                                (:height parent-rect)))]
-        {:displacement (gmt/translate-matrix delta)})
+        scale (gpt/point (/ (+ (:width child-rect) (:x delta))
+                            (:width child-rect))
+                         (/ (+ (:height child-rect) (:y delta))
+                            (:height child-rect)))
 
-      "leftright"
-      (let [delta (gpt/point (- (:width transformed-parent-rect)
-                                (:width parent-rect))
-                             (- (:height transformed-parent-rect)
-                                (:height parent-rect)))
-            scale (gpt/point (/ (+ (:width child-rect) (:x delta))
-                                (:width child-rect))
-                             (/ (+ (:height child-rect) (:y delta))
-                                (:height child-rect)))]
-        {:resize-origin (gpt/point (:x child-rect) (:y child-rect))
-         :resize-vector scale})
+        name-split (str/split (:name child) "-")  ;; TODO use actual shape attributes
+        constraints-hor (keyword (first name-split))
+        constraints-ver (keyword (second name-split))
 
-      "center"
-      (let [delta (gpt/point (/ (- (:width transformed-parent-rect)
-                                   (:width parent-rect)) 2)
-                             (/ (- (:height transformed-parent-rect)
-                                   (:height parent-rect)) 2))]
-        {:displacement (gmt/translate-matrix delta)})
+        modifiers-hor (case constraints-hor
+                        :left
+                        {}
 
-      parent-modifiers)))
+                        :right
+                        {:displacement (gpt/point (:x delta) 0)} ;; we add the matrix below
+
+                        :leftright
+                        {:resize-origin (gpt/point (:x child-rect) (:y child-rect))
+                         :resize-vector (gpt/point (:x scale) 1)}
+
+                        :center
+                        {:displacement (gpt/point (/ (:x delta) 2) 0)}
+
+                        :scale
+                        {:resize-origin (:resize-origin parent-modifiers)
+                         :resize-vector (gpt/point (:x (:resize-vector parent-modifiers)) 1)})
+
+        modifiers-ver (case constraints-ver
+                        :top
+                        {}
+
+                        :bottom
+                        {:displacement (gpt/point 0 (:y delta))}
+
+                        :topbottom
+                        {:resize-origin (gpt/point (:x child-rect) (:y child-rect))
+                         :resize-vector (gpt/point 1 (:y scale))}
+
+                        :center
+                        {:displacement (gpt/point 0 (/ (:y delta) 2))}
+
+                        :scale
+                        {:resize-origin (:resize-origin parent-modifiers)
+                         :resize-vector (gpt/point 1 (:y (:resize-vector parent-modifiers)))})]
+
+    (cond-> {}
+      (or (:displacement modifiers-hor) (:displacement modifiers-ver))
+      (assoc :displacement (gmt/translate-matrix
+                             (gpt/point (get (:displacement modifiers-hor) :x 0)
+                                        (get (:displacement modifiers-ver) :y 0))))
+
+      (or (:resize-vector modifiers-hor) (:resize-vector modifiers-ver))
+      (assoc :resize-origin (:resize-origin modifiers-hor) ;; we assume that the origin is the same
+             :resize-vector (gpt/point (get (:resize-vector modifiers-hor) :x 1)
+                                       (get (:resize-vector modifiers-ver) :y 1))))))
 
 (defn update-group-viewbox
   "Updates the viewbox for groups imported from SVG's"
