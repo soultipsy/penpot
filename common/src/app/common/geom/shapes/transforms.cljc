@@ -363,6 +363,12 @@
              (dissoc :modifiers)))
        shape))))
 
+;; TODO: move to some common file
+(defn- left-of [rect] (:x rect))
+(defn- right-of [rect] (+ (:x rect) (:width rect)))
+(defn- top-of [rect] (:y rect))
+(defn- bottom-of [rect] (+ (:y rect) (:height rect)))
+
 (defn spy [msg x] (js/console.log msg (clj->js x)) x)
 (defn calc-child-modifiers
   [parent transformed-parent child parent-modifiers]
@@ -371,71 +377,119 @@
         transformed-parent-rect (:selrect transformed-parent)
         child-rect              (:selrect child)
 
-        delta (gpt/point (- (:width transformed-parent-rect)
-                            (:width parent-rect))
-                         (- (:height transformed-parent-rect)
-                            (:height parent-rect)))
+        origin (:resize-origin parent-modifiers)
 
-        scale (gpt/point (/ (+ (:width child-rect) (:x delta))
-                            (:width child-rect))
-                         (/ (+ (:height child-rect) (:y delta))
-                            (:height child-rect)))
+        orig-h (cond
+                 (mth/close? (:x origin) (left-of parent-rect)) :left
+                 (mth/close? (:x origin) (right-of parent-rect)) :right
+                 :else :middle)
+
+        orig-v (cond
+                 (mth/close? (:y origin) (top-of parent-rect)) :top
+                 (mth/close? (:y origin) (bottom-of parent-rect)) :bottom
+                 :else :middle)
+
+        delta-h (cond (= orig-h :left)
+                      (- (right-of transformed-parent-rect) (right-of parent-rect))
+
+                      (= orig-h :right)
+                      (- (left-of transformed-parent-rect) (left-of parent-rect))
+
+                      :else 0)
+
+        delta-v (cond (= orig-v :top)
+                      (- (bottom-of transformed-parent-rect) (bottom-of parent-rect))
+
+                      (= orig-v :bottom)
+                      (- (top-of transformed-parent-rect) (top-of parent-rect))
+
+                      :else 0)
 
         name-split (str/split (:name child) "-")  ;; TODO use actual shape attributes
-        constraints-hor (keyword (first name-split))
-        constraints-ver (keyword (second name-split))
-        _ (js/console.log "constraints-hor" (clj->js constraints-hor))
-        _ (js/console.log "constraints-ver" (clj->js constraints-ver))
+        constraints-h (keyword (first name-split))
+        constraints-v (keyword (second name-split))
+        _ (js/console.log "constraints-h" (clj->js constraints-h))
+        _ (js/console.log "constraints-v" (clj->js constraints-v))
 
-        modifiers-hor (case constraints-hor
-                        :left
-                        {}
+        modifiers-h (case constraints-h
+                      :left
+                      (if (= orig-h :right)
+                        {:displacement (gpt/point delta-h 0)} ;; we convert to matrix below
+                        {})
 
-                        :right
-                        {:displacement (gpt/point (:x delta) 0)} ;; we add the matrix below
+                      :right
+                      (if (= orig-h :left)
+                        {:displacement (gpt/point delta-h 0)}
+                        {})
 
-                        :leftright
-                        {:resize-origin (gpt/point (:x child-rect) (:y child-rect))
-                         :resize-vector (gpt/point (:x scale) 1)}
+                      :leftright
+                      (cond (= orig-h :left)
+                            {:resize-origin (gpt/point (left-of child-rect) (top-of child-rect))
+                             :resize-vector (gpt/point (/ (+ (:width child-rect) delta-h)
+                                                          (:width child-rect))
+                                                       1)}
 
-                        :center
-                        {:displacement (gpt/point (/ (:x delta) 2) 0)}
+                            (= orig-h :right)
+                            {:resize-origin (gpt/point (right-of child-rect) (top-of child-rect))
+                             :resize-vector (gpt/point (/ (- (:width child-rect) delta-h)
+                                                          (:width child-rect))
+                                                       1)}
 
-                        :scale
-                        {:resize-origin (:resize-origin parent-modifiers)
-                         :resize-vector (gpt/point (:x (:resize-vector parent-modifiers)) 1)})
-        _ (js/console.log "modifiers-hor" (clj->js modifiers-hor))
+                            :else {})
 
-        modifiers-ver (case constraints-ver
-                        :top
-                        {}
+                      :center
+                      {:displacement (gpt/point (/ delta-h 2) 0)}
 
-                        :bottom
-                        {:displacement (gpt/point 0 (:y delta))}
+                      :scale
+                      {:resize-origin (:resize-origin parent-modifiers)
+                       :resize-vector (gpt/point (:x (:resize-vector parent-modifiers)) 1)})
+        _ (js/console.log "modifiers-h" (clj->js modifiers-h))
 
-                        :topbottom
-                        {:resize-origin (gpt/point (:x child-rect) (:y child-rect))
-                         :resize-vector (gpt/point 1 (:y scale))}
+        modifiers-v (case constraints-v
+                      :top
+                      (if (= orig-v :bottom)
+                        {:displacement (gpt/point 0 delta-v)}
+                        {})
 
-                        :center
-                        {:displacement (gpt/point 0 (/ (:y delta) 2))}
+                      :bottom
+                      (if (= orig-v :top)
+                        {:displacement (gpt/point 0 delta-v)}
+                        {})
 
-                        :scale
-                        {:resize-origin (:resize-origin parent-modifiers)
-                         :resize-vector (gpt/point 1 (:y (:resize-vector parent-modifiers)))})
-        _ (js/console.log "modifiers-ver" (clj->js modifiers-ver))]
+                      :topbottom
+                      (cond (= orig-v :top)
+                            {:resize-origin (gpt/point (left-of child-rect) (top-of child-rect))
+                             :resize-vector (gpt/point 1
+                                                       (/ (+ (:height child-rect) delta-v)
+                                                          (:height child-rect)))}
+
+                            (= orig-v :bottom)
+                            {:resize-origin (gpt/point (left-of child-rect) (bottom-of child-rect))
+                             :resize-vector (gpt/point 1
+                                                       (/ (- (:height child-rect) delta-v)
+                                                          (:height child-rect)))}
+
+                            :else {})
+
+                      :center
+                      {:displacement (gpt/point 0 (/ delta-v 2))}
+
+                      :scale
+                      {:resize-origin (:resize-origin parent-modifiers)
+                       :resize-vector (gpt/point 1 (:y (:resize-vector parent-modifiers)))})
+        _ (js/console.log "modifiers-v" (clj->js modifiers-v))]
 
     (spy "result" (cond-> {}
-      (or (:displacement modifiers-hor) (:displacement modifiers-ver))
+      (or (:displacement modifiers-h) (:displacement modifiers-v))
       (assoc :displacement (gmt/translate-matrix
-                             (gpt/point (get (:displacement modifiers-hor) :x 0)
-                                        (get (:displacement modifiers-ver) :y 0))))
+                             (gpt/point (get (:displacement modifiers-h) :x 0)
+                                        (get (:displacement modifiers-v) :y 0))))
 
-      (or (:resize-vector modifiers-hor) (:resize-vector modifiers-ver))
-      (assoc :resize-origin (or (:resize-origin modifiers-hor)  ;; we assume that the origin is the same
-                                (:resize-origin modifiers-ver)) ;; in any direction
-             :resize-vector (gpt/point (get (:resize-vector modifiers-hor) :x 1)
-                                       (get (:resize-vector modifiers-ver) :y 1)))))))
+      (or (:resize-vector modifiers-h) (:resize-vector modifiers-v))
+      (assoc :resize-origin (or (:resize-origin modifiers-h)  ;; we assume that the origin is the same
+                                (:resize-origin modifiers-v)) ;; in any direction
+             :resize-vector (gpt/point (get (:resize-vector modifiers-h) :x 1)
+                                       (get (:resize-vector modifiers-v) :y 1)))))))
 
 (defn update-group-viewbox
   "Updates the viewbox for groups imported from SVG's"
