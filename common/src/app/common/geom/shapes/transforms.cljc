@@ -363,8 +363,10 @@
              (dissoc :modifiers)))
        shape))))
 
+(defn spy [msg x] (js/console.log msg (clj->js x)) x)
 (defn calc-child-modifiers
   [parent transformed-parent child parent-modifiers]
+  (js/console.log "parent-modifiers" (clj->js parent-modifiers))
   (let [parent-rect             (:selrect parent)
         transformed-parent-rect (:selrect transformed-parent)
         child-rect              (:selrect child)
@@ -382,6 +384,8 @@
         name-split (str/split (:name child) "-")  ;; TODO use actual shape attributes
         constraints-hor (keyword (first name-split))
         constraints-ver (keyword (second name-split))
+        _ (js/console.log "constraints-hor" (clj->js constraints-hor))
+        _ (js/console.log "constraints-ver" (clj->js constraints-ver))
 
         modifiers-hor (case constraints-hor
                         :left
@@ -400,6 +404,7 @@
                         :scale
                         {:resize-origin (:resize-origin parent-modifiers)
                          :resize-vector (gpt/point (:x (:resize-vector parent-modifiers)) 1)})
+        _ (js/console.log "modifiers-hor" (clj->js modifiers-hor))
 
         modifiers-ver (case constraints-ver
                         :top
@@ -417,18 +422,20 @@
 
                         :scale
                         {:resize-origin (:resize-origin parent-modifiers)
-                         :resize-vector (gpt/point 1 (:y (:resize-vector parent-modifiers)))})]
+                         :resize-vector (gpt/point 1 (:y (:resize-vector parent-modifiers)))})
+        _ (js/console.log "modifiers-ver" (clj->js modifiers-ver))]
 
-    (cond-> {}
+    (spy "result" (cond-> {}
       (or (:displacement modifiers-hor) (:displacement modifiers-ver))
       (assoc :displacement (gmt/translate-matrix
                              (gpt/point (get (:displacement modifiers-hor) :x 0)
                                         (get (:displacement modifiers-ver) :y 0))))
 
       (or (:resize-vector modifiers-hor) (:resize-vector modifiers-ver))
-      (assoc :resize-origin (:resize-origin modifiers-hor) ;; we assume that the origin is the same
+      (assoc :resize-origin (or (:resize-origin modifiers-hor)  ;; we assume that the origin is the same
+                                (:resize-origin modifiers-ver)) ;; in any direction
              :resize-vector (gpt/point (get (:resize-vector modifiers-hor) :x 1)
-                                       (get (:resize-vector modifiers-ver) :y 1))))))
+                                       (get (:resize-vector modifiers-ver) :y 1)))))))
 
 (defn update-group-viewbox
   "Updates the viewbox for groups imported from SVG's"

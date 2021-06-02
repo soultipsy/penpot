@@ -426,6 +426,33 @@
 
 ;; -- Apply modifiers
 
+(defn- set-modifiers-recursive
+  [objects objects' shape modifiers recurse-frames?]
+  (let [children (if (or (not= (:type shape) :frame)
+                         recurse-frames?)
+                   (->> (get shape :shapes [])
+                        (map #(get objects' %)))
+                   [])
+
+        transformed-shape (when (seq children)
+                            (gsh/transform-shape (assoc shape :modifiers modifiers)))
+
+        set-child (fn [objects child]
+                    (let [child-modifiers (gsh/calc-child-modifiers shape
+                                                                    transformed-shape
+                                                                    child
+                                                                    modifiers)]
+                      (set-modifiers-recursive objects
+                                               objects'
+                                               child
+                                               child-modifiers
+                                               recurse-frames?)))]
+
+    (reduce set-child
+            (update-in objects [(:id shape) :modifiers] #(merge % modifiers))
+            children)))
+
+(defn spy [msg x] (js/console.log msg (clj->js x)) x)
 (defn set-modifiers
   ([ids] (set-modifiers ids nil true))
   ([ids modifiers] (set-modifiers ids modifiers true))
@@ -443,20 +470,14 @@
              not-frame-id?
              (fn [shape-id]
                (let [shape (get objects shape-id)]
-                 (or recurse-frames? (not (= :frame (:type shape))))))
+                 (or recurse-frames? (not (= :frame (:type shape))))))]
 
-             ;; For each shape updates the modifiers given as arguments
-             update-shape
-             (fn [objects shape-id]
-               (update-in objects [shape-id :modifiers] #(merge % modifiers)))
-
-             ;; ID's + Children but remove frame children if the flag is set to false
-             ids-with-children (concat ids (mapcat #(cp/get-children % objects)
-                                                   (filter not-frame-id? ids)))]
-
-         (update state :workspace-modifiers
-                 #(reduce update-shape % ids-with-children)))))))
-
+         (spy "workspace-modifiers" (update state :workspace-modifiers
+                 #(set-modifiers-recursive %
+                                           objects
+                                           (get objects (first ids))
+                                           modifiers
+                                           recurse-frames?))))))))
 
 ;; Set-rotation is custom because applies different modifiers to each
 ;; shape adjusting their position.
@@ -546,25 +567,6 @@
 ;; Event mainly used for handling user modification of the size of the
 ;; object from workspace sidebar options inputs.
 
-(defn set-modifiers-recursive
-  [objects shape modifiers]
-  (let [children (->> (get shape :shapes [])
-                      (map #(get objects %)))
-
-        transformed-shape (when (seq children)
-                            (gsh/transform-shape (assoc shape :modifiers modifiers)))
-
-        set-child (fn [objects child]
-                    (let [child-modifiers (gsh/calc-child-modifiers shape
-                                                                    transformed-shape
-                                                                    child
-                                                                    modifiers)]
-                      (set-modifiers-recursive objects child child-modifiers)))]
-
-    (reduce set-child
-            (assoc-in objects [(:id shape) :modifiers] modifiers)
-            children)))
-
 (defn update-dimensions
   [ids attr value]
   (us/verify (s/coll-of ::us/uuid) ids)
@@ -586,7 +588,7 @@
             (fn [objects shape-id]
               (let [shape (get objects shape-id)
                     modifier (gsh/resize-modifiers shape attr value)]
-                (set-modifiers-recursive objects shape modifier)))]
+                (set-modifiers-recursive objects objects shape modifier true)))]
 
         (d/update-in-when
          state
