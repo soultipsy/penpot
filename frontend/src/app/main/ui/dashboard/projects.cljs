@@ -138,7 +138,7 @@
                        (dt/timeago {:locale locale}))]
           [:span.recent-files-row-title-info (str ", " time)]))
 
-      #_[:& import-button {:project-id (:id project)
+      [:& import-button {:project-id (:id project)
                          :on-finish-import on-finish-import}]
 
       [:a.btn-secondary.btn-small

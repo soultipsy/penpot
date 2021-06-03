@@ -11,10 +11,25 @@
 
 (deftype File [^:mutable file]
   Object
+
   (addPage [self name]
     (set! file (fb/add-page file name))
-    (str (:current-page-id file))))
+    (str (:current-page-id file)))
 
+  (addArtboard [self data])
+  (closeArtboard [self data])
+
+  (addGroup [self data])
+  (closeGroup [self])
+
+  (createShape [self])
+  (createRect [self])
+  (createCircle [self])
+  (createPath [self])
+  (createText [self])
+  (createImage [self])
+  (closePage [self])
+  (generateChanges [self]))
 
 (defn create-file-export [^string name]
   (File. (fb/create-file name)))

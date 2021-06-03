@@ -192,7 +192,7 @@
                       [[(tr "dashboard.duplicate-multi" file-count) on-duplicate]
                        (when (or (seq current-projects) (seq other-teams))
                          [(tr "dashboard.move-to-multi" file-count) nil sub-options])
-                       #_[(tr "dashboard.export-multi" file-count) on-export-files]
+                       [(tr "dashboard.export-multi" file-count) on-export-files]
                        [:separator]
                        [(tr "labels.delete-multi-files" file-count) on-delete]]
 
@@ -204,7 +204,7 @@
                        (if (:is-shared file)
                          [(tr "dashboard.remove-shared") on-del-shared]
                          [(tr "dashboard.add-shared") on-add-shared])
-                       #_[(tr "dashboard.export-single") on-export-files]
+                       [(tr "dashboard.export-single") on-export-files]
                        [:separator]
                        [(tr "labels.delete") on-delete]])]
 
