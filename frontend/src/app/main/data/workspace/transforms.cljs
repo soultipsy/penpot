@@ -435,7 +435,10 @@
                    [])
 
         transformed-shape (when (seq children)
-                            (gsh/transform-shape (assoc shape :modifiers modifiers)))
+                            (gsh/transform-shape
+                              (assoc shape :modifiers (select-keys modifiers
+                                                                   [:resize-origin
+                                                                    :resize-vector]))))
 
         set-child (fn [objects child]
                     (let [child-modifiers (gsh/calc-child-modifiers shape
@@ -472,12 +475,15 @@
                (let [shape (get objects shape-id)]
                  (or recurse-frames? (not (= :frame (:type shape))))))]
 
+         (js/console.log "+++++++++++")
+         (js/console.log "initial shape" (clj->js (get objects (first ids))))
          (spy "workspace-modifiers" (update state :workspace-modifiers
                  #(set-modifiers-recursive %
                                            objects
-                                           (get objects (first ids))
+                                           (get objects (first ids)) ;; TODO ojoooooooooooooooooo
                                            modifiers
-                                           recurse-frames?))))))))
+                                           true))))))))
+                                           ;; recurse-frames?))))))))
 
 ;; Set-rotation is custom because applies different modifiers to each
 ;; shape adjusting their position.
@@ -588,6 +594,8 @@
             (fn [objects shape-id]
               (let [shape (get objects shape-id)
                     modifier (gsh/resize-modifiers shape attr value)]
+                (js/console.log "###########")
+                (js/console.log "initial shape" (clj->js shape))
                 (set-modifiers-recursive objects objects shape modifier true)))]
 
         (d/update-in-when

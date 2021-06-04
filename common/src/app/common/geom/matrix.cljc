@@ -38,6 +38,16 @@
   ([m1 m2 & others]
    (reduce multiply (multiply m1 m2) others)))
 
+(defn spy [msg x] (println msg x) x)
+(defn add
+  [{m1a :a m1b :b m1c :c m1d :d m1e :e m1f :f :as a}
+   {m2a :a m2b :b m2c :c m2d :d m2e :e m2f :f :as b}]
+  (println "a" a)
+  (println "b" b)
+  (spy "add" (Matrix.
+   (+ m1a m2a) (+ m1b m2b) (+ m1c m2c)
+   (+ m1d m2d) (+ m1e m2e) (+ m1f m2f))))
+
 (defn substract
   [{m1a :a m1b :b m1c :c m1d :d m1e :e m1f :f}
    {m2a :a m2b :b m2c :c m2d :d m2e :e m2f :f}]
