@@ -12,6 +12,7 @@
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
    [app.main.data.dashboard :as dd]
+   [app.main.data.events :as ev]
    [app.main.data.fonts :as df]
    [app.main.data.media :as di]
    [app.main.data.messages :as dm]
@@ -38,7 +39,7 @@
    [tubax.core :as tubax]))
 
 (declare persist-changes)
-(declare persist-sychronous-changes)
+(declare persist-synchronous-changes)
 (declare shapes-changes-persisted)
 (declare update-persistence-status)
 
@@ -55,13 +56,14 @@
                           (rx/filter dch/commit-changes?)
                           (rx/debounce 2000)
                           (rx/merge stoper forcer))
-
-            local-file? #(as-> (:file-id %) event-file-id
-                           (or (nil? event-file-id)
-                               (= event-file-id file-id)))
-            library-file? #(as-> (:file-id %) event-file-id
-                             (and (some? event-file-id)
-                                  (not= event-file-id file-id)))
+            local-file?
+            #(as-> (:file-id %) event-file-id
+               (or (nil? event-file-id)
+                   (= event-file-id file-id)))
+            library-file?
+            #(as-> (:file-id %) event-file-id
+               (and (some? event-file-id)
+                    (not= event-file-id file-id)))
 
             on-dirty
             (fn []
@@ -98,7 +100,7 @@
                     (rx/map deref)
                     (rx/filter library-file?)
                     (rx/filter (complement #(empty? (:changes %))))
-                    (rx/map persist-sychronous-changes)
+                    (rx/map persist-synchronous-changes)
                     (rx/take-until (rx/delay 100 stoper)))
                (->> stream
                     (rx/filter (ptk/type? ::changes-persisted))
@@ -166,7 +168,7 @@
                (rx/mapcat handle-response)
                (rx/catch on-error)))))))
 
-(defn persist-sychronous-changes
+(defn persist-synchronous-changes
   [{:keys [file-id changes]}]
   (us/verify ::us/uuid file-id)
   (ptk/reify ::persist-synchronous-changes
@@ -199,6 +201,9 @@
 
 (s/def ::shapes-changes-persisted
   (s/keys :req-un [::revn ::cp/changes]))
+
+(defn shapes-persisted-event? [event]
+  (= (ptk/type event) ::changes-persisted))
 
 (defn shapes-changes-persisted
   [file-id {:keys [revn changes] :as params}]
@@ -275,6 +280,10 @@
   [id is-shared]
   {:pre [(uuid? id) (boolean? is-shared)]}
   (ptk/reify ::set-file-shared
+    IDeref
+    (-deref [_]
+      {::ev/origin "workspace" :id id :shared is-shared})
+
     ptk/UpdateEvent
     (update [_ state]
       (assoc-in state [:workspace-file :is-shared] is-shared))
@@ -313,7 +322,7 @@
 
 (defn link-file-to-library
   [file-id library-id]
-  (ptk/reify ::link-file-to-library
+  (ptk/reify ::attach-library
     ptk/WatchEvent
     (watch [_ _ _]
       (let [fetched #(assoc-in %2 [:workspace-libraries (:id %1)] %1)
@@ -325,14 +334,17 @@
 
 (defn unlink-file-from-library
   [file-id library-id]
-  (ptk/reify ::unlink-file-from-library
+  (ptk/reify ::detach-library
+    ptk/UpdateEvent
+    (update [_ state]
+      (d/dissoc-in state [:workspace-libraries library-id]))
+
     ptk/WatchEvent
     (watch [_ _ _]
-      (let [unlinked #(d/dissoc-in % [:workspace-libraries library-id])
-            params   {:file-id file-id
-                      :library-id library-id}]
+      (let [params {:file-id file-id
+                    :library-id library-id}]
         (->> (rp/mutation :unlink-file-from-library params)
-             (rx/map (constantly unlinked)))))))
+             (rx/ignore))))))
 
 
 ;; --- Upload File Media objects
@@ -365,7 +377,7 @@
                 (= (:code error) :media-type-not-allowed)
                 (rx/of (dm/error (tr "errors.media-type-not-allowed")))
 
-                (= (:code error) :ubable-to-access-to-url)
+                (= (:code error) :unable-to-access-to-url)
                 (rx/of (dm/error (tr "errors.media-type-not-allowed")))
 
                 (= (:code error) :invalid-image)
@@ -475,7 +487,7 @@
               ;; Media objects are blob of data to be upload
               (process-blobs params))
 
-            ;; Every stream has its own sideffect. We need to ignore the result
+            ;; Every stream has its own sideeffect. We need to ignore the result
             (rx/ignore)
             (handle-upload-error on-error)
             (rx/finalize (st/emitf (dm/hide-tag :media-loading))))))))
@@ -554,8 +566,22 @@
   [frame-id]
   (ptk/event ::update-frame-thumbnail {:frame-id frame-id}))
 
+(defn update-shape-thumbnail
+  "An event that is succeptible to be executed out of the main flow, so
+  it need to correctly handle the situation that there are no page-id
+  or file-is loaded."
+  [shape-id thumbnail-data]
+  (ptk/reify ::update-shape-thumbnail
+    ptk/WatchEvent
+    (watch [_ state _]
+      (when (and (dwc/initialized? state)
+                 (uuid? shape-id))
+        (rx/of (dch/update-shapes [shape-id]
+                                  #(assoc % :thumbnail thumbnail-data)
+                                  {:save-undo? false}))))))
+
 (defn- extract-frame-changes
-  "Process a changes set in a commit to extract the frames that are channging"
+  "Process a changes set in a commit to extract the frames that are changing"
   [[event [old-objects new-objects]]]
   (let [changes (-> event deref :changes)
 
@@ -632,7 +658,7 @@
          (->> (rx/from no-thumb-frames)
               (rx/map #(update-frame-thumbnail %)))
 
-         ;; We remove the thumbnails inmediately but defer their generation
+         ;; We remove the thumbnails immediately but defer their generation
          (rx/merge
           (->> frame-changes
                (rx/take-until stopper)

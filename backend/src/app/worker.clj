@@ -9,12 +9,12 @@
   (:require
    [app.common.data :as d]
    [app.common.exceptions :as ex]
+   [app.common.logging :as l]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
    [app.db :as db]
    [app.metrics :as mtx]
    [app.util.async :as aa]
-   [app.util.logging :as l]
    [app.util.time :as dt]
    [clojure.core.async :as a]
    [clojure.spec.alpha :as s]
@@ -470,7 +470,7 @@
     :type :summary
     :quantiles []
     :name "tasks_checkout_timing"
-    :help "Latency measured between scheduld_at and execution time."
+    :help "Latency measured between scheduled_at and execution time."
     :wrap (fn [rootf mobj]
             (let [mdata (meta rootf)
                   origf (::original mdata rootf)]

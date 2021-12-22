@@ -77,7 +77,7 @@ msgid "auth.notifications.invalid-token-error"
 msgstr "Неверный код восстановления."
 
 #: src/app/main/ui/auth/recovery.cljs
-msgid "auth.notifications.password-changed-succesfully"
+msgid "auth.notifications.password-changed-successfully"
 msgstr "Пароль изменен успешно"
 
 #: src/app/main/ui/auth/recovery_request.cljs
@@ -414,6 +414,10 @@ msgstr "Сохранить"
 msgid "labels.settings"
 msgstr "Параметры"
 
+#: src/app/main/ui/viewer/header.cljs, src/app/main/ui/viewer/header.cljs, src/app/main/ui/viewer/header.cljs
+msgid "labels.share-prototype"
+msgstr "Поделиться ссылкой"
+
 #: src/app/main/ui/dashboard/sidebar.cljs
 msgid "labels.shared-libraries"
 msgstr ""
@@ -598,10 +602,6 @@ msgstr "Удалить ссылку"
 msgid "viewer.header.share.subtitle"
 msgstr "Любой, у кого есть ссылка будет иметь доступ"
 
-#: src/app/main/ui/viewer/header.cljs, src/app/main/ui/viewer/header.cljs, src/app/main/ui/viewer/header.cljs
-msgid "viewer.header.share.title"
-msgstr "Поделиться ссылкой"
-
 #: src/app/main/ui/viewer/header.cljs
 msgid "viewer.header.show-interactions"
 msgstr "Показывать взаимодействия"
@@ -616,35 +616,35 @@ msgstr "План сайта"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.hcenter"
-msgstr "Выровнять по горизонтали"
+msgstr "Выровнять по горизонтали (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.hdistribute"
-msgstr "Распределить горизонтальное пространство"
+msgstr "Распределить горизонтальное пространство (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.hleft"
-msgstr "Выровнять по левому краю"
+msgstr "Выровнять по левому краю (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.hright"
-msgstr "Выровнять по правому краю"
+msgstr "Выровнять по правому краю (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.vbottom"
-msgstr "Выровнять по нижнему краю"
+msgstr "Выровнять по нижнему краю (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.vcenter"
-msgstr "Выровнять по вертикали"
+msgstr "Выровнять по вертикали (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.vdistribute"
-msgstr "Распределить вертикальное пространство"
+msgstr "Распределить вертикальное пространство (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.vtop"
-msgstr "Выровнять по верхнему краю"
+msgstr "Выровнять по верхнему краю (%s)"
 
 #: src/app/main/ui/workspace/sidebar/assets.cljs
 msgid "workspace.assets.assets"
@@ -957,14 +957,6 @@ msgstr "Заливка для группы"
 msgid "workspace.options.group-stroke"
 msgstr "Обводка для группы"
 
-#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
-msgid "workspace.options.navigate-to"
-msgstr "Перейти к"
-
-#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
-msgid "workspace.options.none"
-msgstr "Не задано"
-
 #: src/app/main/ui/workspace/sidebar/options/shapes/frame.cljs, src/app/main/ui/workspace/sidebar/options/menus/measures.cljs
 msgid "workspace.options.position"
 msgstr "Позиция"
@@ -1145,7 +1137,7 @@ msgstr "Кривая (%s)"
 
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.toolbar.ellipse"
-msgstr ""
+msgstr "Эллипс (%s)"
 
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.toolbar.frame"

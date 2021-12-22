@@ -19,6 +19,8 @@
    [app.util.keyboard :as kbd]
    [app.util.object :as obj]
    [app.util.timers :as ts]
+   [beicon.core :as rx]
+   [cuerdas.core :as str]
    [okulary.core :as l]
    [rumext.alpha :as mf]))
 
@@ -39,6 +41,11 @@
              (if (:masked-group? shape)
                i/mask
                i/folder))
+    :bool (case (:bool-type shape)
+            :difference   i/boolean-difference
+            :exclude      i/boolean-exclude
+            :intersection i/boolean-intersection
+            #_:default    i/boolean-union)
     :svg-raw i/file-svg
     nil))
 
@@ -63,7 +70,8 @@
                         (on-stop-edit)
                         (swap! local assoc :edition false)
                         (st/emit! (dw/end-rename-shape)
-                                  (dw/update-shape (:id shape) {:name name}))))
+                                  (when-not (str/empty? name)
+                                    (dw/update-shape (:id shape) {:name name})))))
 
         cancel-edit (fn []
                       (on-stop-edit)
@@ -198,8 +206,12 @@
     (mf/use-effect
      (mf/deps selected)
      (fn []
-       (when (and (= (count selected) 1) selected?)
-         (.scrollIntoView (mf/ref-val dref) #js {:block "nearest", :behavior "smooth"}))))
+       (let [subid
+             (when (and (= (count selected) 1) selected?)
+               (ts/schedule-on-idle
+                #(.scrollIntoView (mf/ref-val dref) #js {:block "nearest", :behavior "smooth"})))]
+         #(when (some? subid)
+            (rx/dispose! subid)))))
 
     [:li {:on-context-menu on-context-menu
           :ref dref
@@ -292,7 +304,8 @@
                     :shape-ref
                     :touched
                     :metadata
-                    :masked-group?]))
+                    :masked-group?
+                    :bool-type]))
 
 (defn- strip-objects
   [objects]

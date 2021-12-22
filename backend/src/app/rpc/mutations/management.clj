@@ -39,10 +39,22 @@
   [file index]
   (letfn [(process-form [form]
             (cond-> form
-              ;; Relink Components
+              ;; Relink library items
               (and (map? form)
                    (uuid? (:component-file form)))
               (update :component-file #(get index % %))
+
+              (and (map? form)
+                   (uuid? (:fill-color-ref-file form)))
+              (update :fill-color-ref-file #(get index % %))
+
+              (and (map? form)
+                   (uuid? (:stroke-color-ref-file form)))
+              (update :stroke-color-ref-file #(get index % %))
+
+              (and (map? form)
+                   (uuid? (:typography-ref-file form)))
+              (update :typography-ref-file #(get index % %))
 
               ;; Relink Image Shapes
               (and (map? form)
@@ -50,7 +62,7 @@
                    (= :image (:type form)))
               (update-in [:metadata :id] #(get index % %))))
 
-          ;; A function responsible to analize all file data and
+          ;; A function responsible to analyze all file data and
           ;; replace the old :component-file reference with the new
           ;; ones, using the provided file-index
           (relink-shapes [data]
@@ -282,7 +294,7 @@
       ;; move all files to the project
       (db/exec-one! conn [sql:move-files project-id fids])
 
-      ;; delete posible broken relations on moved files
+      ;; delete possible broken relations on moved files
       (db/exec-one! conn [sql:delete-broken-relations pids])
 
       nil)))
@@ -317,7 +329,7 @@
                   {:team-id team-id}
                   {:id project-id})
 
-      ;; delete posible broken relations on moved files
+      ;; delete possible broken relations on moved files
       (db/exec-one! conn [sql:delete-broken-relations pids])
 
       nil)))

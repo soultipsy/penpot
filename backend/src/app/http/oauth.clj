@@ -8,6 +8,7 @@
   (:require
    [app.common.data :as d]
    [app.common.exceptions :as ex]
+   [app.common.logging :as l]
    [app.common.spec :as us]
    [app.common.uri :as u]
    [app.config :as cf]
@@ -15,7 +16,6 @@
    [app.loggers.audit :as audit]
    [app.rpc.queries.profile :as profile]
    [app.util.http :as http]
-   [app.util.logging :as l]
    [app.util.time :as dt]
    [clojure.data.json :as json]
    [clojure.set :as set]
@@ -58,9 +58,15 @@
           {:token (get data "access_token")
            :type  (get data "token_type")})))
     (catch Exception e
-      (l/error :hint "unexpected error on retrieve-access-token"
-               :cause e)
+      (l/warn :hint "unexpected error on retrieve-access-token" :cause e)
       nil)))
+
+(defn- qualify-props
+  [provider props]
+  (reduce-kv (fn [result k v]
+               (assoc result (keyword (:name provider) (name k)) v))
+             {}
+             props))
 
 (defn- retrieve-user-info
   [{:keys [provider] :as cfg} tdata]
@@ -76,11 +82,10 @@
           {:backend (:name provider)
            :email (:email info)
            :fullname (:name info)
-           :props (dissoc info :name :email)})))
-
+           :props (->> (dissoc info :name :email)
+                       (qualify-props provider))})))
     (catch Exception e
-      (l/error :hint "unexpected exception on retrieve-user-info"
-               :cause e)
+      (l/warn :hint "unexpected exception on retrieve-user-info" :cause e)
       nil)))
 
 (s/def ::backend ::us/not-empty-string)
@@ -125,7 +130,7 @@
         (when-not (set/subset? provider-roles profile-roles)
           (ex/raise :type :internal
                     :code :unable-to-auth
-                    :hint "not enought permissions"))))
+                    :hint "not enough permissions"))))
 
     (cond-> info
       (some? (:invitation-token state))
@@ -138,15 +143,14 @@
 
 ;; --- HTTP HANDLERS
 
-(defn extract-props
+(defn extract-utm-props
+  "Extracts additional data from user params."
   [params]
   (reduce-kv (fn [params k v]
                (let [sk (name k)]
                  (cond-> params
-                   (or (str/starts-with? sk "pm_")
-                       (str/starts-with? sk "pm-")
-                       (str/starts-with? sk "utm_"))
-                   (assoc (-> sk str/kebab keyword) v))))
+                   (str/starts-with? sk "utm_")
+                   (assoc (->> sk str/kebab (keyword "penpot")) v))))
              {}
              params))
 
@@ -197,6 +201,7 @@
            (sxf request)))
     (let [info   (assoc info
                         :iss :prepared-register
+                        :is-active true
                         :exp (dt/in-future {:hours 48}))
           token  (tokens :generate info)
           params (d/without-nils
@@ -210,7 +215,7 @@
 (defn- auth-handler
   [{:keys [tokens] :as cfg} {:keys [params] :as request}]
   (let [invitation (:invitation-token params)
-        props      (extract-props params)
+        props      (extract-utm-props params)
         state      (tokens :generate
                            {:iss :oauth
                             :invitation-token invitation
@@ -263,14 +268,29 @@
 
 (defn- discover-oidc-config
   [{:keys [base-uri] :as opts}]
+
   (let [discovery-uri (u/join base-uri ".well-known/openid-configuration")
-        response      (http/send! {:method :get :uri (str discovery-uri)})]
-    (when (= 200 (:status response))
+        response      (ex/try (http/send! {:method :get :uri (str discovery-uri)}))]
+    (cond
+      (ex/exception? response)
+      (do
+        (l/warn :hint "unable to discover oidc configuration"
+                :discover-uri (str discovery-uri)
+                :cause response)
+        nil)
+
+      (= 200 (:status response))
       (let [data (json/read-str (:body response))]
-        (assoc opts
-               :token-uri (get data "token_endpoint")
-               :auth-uri (get data "authorization_endpoint")
-               :user-uri (get data "userinfo_endpoint"))))))
+        {:token-uri (get data "token_endpoint")
+         :auth-uri  (get data "authorization_endpoint")
+         :user-uri  (get data "userinfo_endpoint")})
+
+      :else
+      (do
+        (l/warn :hint "unable to discover OIDC configuration"
+                :uri (str discovery-uri)
+                :response-status-code (:status response))
+        nil))))
 
 (defn- obfuscate-string
   [s]
@@ -294,17 +314,23 @@
     (if (and (string? (:base-uri opts))
              (string? (:client-id opts))
              (string? (:client-secret opts)))
-      (if (and (string? (:token-uri opts))
-               (string? (:user-uri opts))
-               (string? (:auth-uri opts)))
-        (do
-          (l/info :action "initialize" :provider "oidc" :method "static"
-                  :opts (pr-str (update opts :client-secret obfuscate-string)))
-          (assoc-in cfg [:providers "oidc"] opts))
-        (let [opts (discover-oidc-config opts)]
-          (l/info :action "initialize" :provider "oidc" :method "discover"
-                  :opts (pr-str (update opts :client-secret obfuscate-string)))
-          (assoc-in cfg [:providers "oidc"] opts)))
+      (do
+        (l/debug :hint "initialize oidc provider" :name "generic-oidc"
+                 :opts (update opts :client-secret obfuscate-string))
+        (if (and (string? (:token-uri opts))
+                 (string? (:user-uri opts))
+                 (string? (:auth-uri opts)))
+          (do
+            (l/debug :hint "initialized with user provided configuration")
+            (assoc-in cfg [:providers "oidc"] opts))
+          (do
+            (l/debug :hint "trying to discover oidc provider configuration using BASE_URI")
+            (if-let [opts' (discover-oidc-config opts)]
+              (do
+                (l/debug :hint "discovered opts" :additional-opts opts')
+                (assoc-in cfg [:providers "oidc"] (merge opts opts')))
+
+              cfg))))
       cfg)))
 
 (defn- initialize-google-provider

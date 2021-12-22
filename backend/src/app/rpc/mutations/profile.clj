@@ -9,17 +9,17 @@
    [app.common.exceptions :as ex]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
-   [app.config :as cfg]
+   [app.config :as cf]
    [app.db :as db]
    [app.emails :as eml]
-   [app.http.oauth :refer [extract-props]]
+   [app.http.oauth :refer [extract-utm-props]]
    [app.loggers.audit :as audit]
    [app.media :as media]
-   [app.rpc.mutations.projects :as projects]
+   [app.metrics :as mtx]
    [app.rpc.mutations.teams :as teams]
    [app.rpc.queries.profile :as profile]
-   [app.setup.initial-data :as sid]
    [app.storage :as sto]
+   [app.util.rlimit :as rlimit]
    [app.util.services :as sv]
    [app.util.time :as dt]
    [buddy.hashers :as hashers]
@@ -99,17 +99,16 @@
 
 (sv/defmethod ::prepare-register-profile {:auth false}
   [{:keys [pool tokens] :as cfg} params]
-  (when-not (cfg/get :registration-enabled)
+  (when-not (contains? cf/flags :registration)
     (ex/raise :type :restriction
               :code :registration-disabled))
-
-  (when-let [domains (cfg/get :registration-domain-whitelist)]
+  (when-let [domains (cf/get :registration-domain-whitelist)]
     (when-not (email-domain-in-whitelist? domains (:email params))
       (ex/raise :type :validation
                 :code :email-domain-is-not-allowed)))
 
   ;; Don't allow proceed in preparing registration if the profile is
-  ;; already reported as spamer.
+  ;; already reported as spammer.
   (when (eml/has-bounce-reports? pool (:email params))
     (ex/raise :type :validation
               :code :email-has-permanent-bounces
@@ -126,43 +125,38 @@
 
 ;; --- MUTATION: Register Profile
 
-(s/def ::accept-terms-and-privacy ::us/boolean)
-(s/def ::accept-newsletter-subscription ::us/boolean)
 (s/def ::token ::us/not-empty-string)
-
 (s/def ::register-profile
-  (s/keys :req-un [::token ::fullname
-                   ::accept-terms-and-privacy]
-          :opt-un [::accept-newsletter-subscription]))
+  (s/keys :req-un [::token ::fullname]))
 
-(sv/defmethod ::register-profile {:auth false :rlimit :password}
+(sv/defmethod ::register-profile
+  {:auth false ::rlimit/permits (cf/get :rlimit-password)}
   [{:keys [pool] :as cfg} params]
-  (when-not (:accept-terms-and-privacy params)
-    (ex/raise :type :validation
-              :code :invalid-terms-and-privacy))
-
   (db/with-atomic [conn pool]
-    (let [cfg     (assoc cfg :conn conn)]
-      (register-profile cfg params))))
+    (-> (assoc cfg :conn conn)
+        (register-profile params))))
 
 (defn- annotate-profile-register
   "A helper for properly increase the profile-register metric once the
   transaction is completed."
   [metrics]
   (fn []
-    ((get-in metrics [:definitions :profile-register]) :inc)))
+    (let [mobj (get-in metrics [:definitions :profile-register])]
+      ((::mtx/fn mobj) {:by 1}))))
 
 (defn register-profile
   [{:keys [conn tokens session metrics] :as cfg} {:keys [token] :as params}]
-  (let [claims (tokens :verify {:token token :iss :prepared-register})
-        params (merge params claims)]
-    (check-profile-existence! conn params)
-    (let [profile (->> params
-                       (create-profile conn)
-                       (create-profile-relations conn)
-                       (decode-profile-row))]
-      (sid/load-initial-project! conn profile)
+  (let [claims    (tokens :verify {:token token :iss :prepared-register})
+        params    (merge params claims)]
 
+    (check-profile-existence! conn params)
+
+    (let [is-active (or (:is-active params)
+                        (contains? cf/flags :insecure-register))
+          profile   (->> (assoc params :is-active is-active)
+                         (create-profile conn)
+                         (create-profile-relations conn)
+                         (decode-profile-row))]
       (cond
         ;; If invitation token comes in params, this is because the
         ;; user comes from team-invitation process; in this case,
@@ -183,9 +177,18 @@
              ::audit/profile-id (:id profile)}))
 
         ;; If auth backend is different from "penpot" means user is
-        ;; registring using third party auth mechanism; in this case
+        ;; registering using third party auth mechanism; in this case
         ;; we need to mark this session as logged.
         (not= "penpot" (:auth-backend profile))
+        (with-meta (profile/strip-private-attrs profile)
+          {:transform-response ((:create session) (:id profile))
+           :before-complete (annotate-profile-register metrics)
+           ::audit/props (audit/profile->props profile)
+           ::audit/profile-id (:id profile)})
+
+        ;; If the `:enable-insecure-register` flag is set, we proceed
+        ;; to sign in the user directly, without email verification.
+        (true? is-active)
         (with-meta (profile/strip-private-attrs profile)
           {:transform-response ((:create session) (:id profile))
            :before-complete (annotate-profile-register metrics)
@@ -202,7 +205,6 @@
               ptoken (tokens :generate-predefined
                              {:iss :profile-identity
                               :profile-id (:id profile)})]
-
           (eml/send! {::eml/conn conn
                       ::eml/factory eml/register
                       :public-uri (:public-uri cfg)
@@ -222,23 +224,22 @@
   [conn params]
   (let [id        (or (:id params) (uuid/next))
 
-        props     (-> (extract-props params)
+        props     (-> (extract-utm-props params)
                       (merge (:props params))
-                      (assoc :accept-terms-and-privacy (:accept-terms-and-privacy params true))
-                      (assoc :accept-newsletter-subscription (:accept-newsletter-subscription params false))
                       (db/tjson))
 
         password  (if-let [password (:password params)]
                     (derive-password password)
                     "!")
 
-        locale    (as-> (:locale params) locale
-                    (and (string? locale) (not (str/blank? locale)) locale))
+        locale    (:locale params)
+        locale    (when (and (string? locale) (not (str/blank? locale)))
+                    locale)
 
         backend   (:backend params "penpot")
         is-demo   (:is-demo params false)
         is-muted  (:is-muted params false)
-        is-active (:is-active params (or (not= "penpot" backend) is-demo))
+        is-active (:is-active params false)
         email     (str/lower (:email params))
 
         params    {:id id
@@ -263,28 +264,15 @@
                       :code :email-already-exists
                       :cause e)))))))
 
-
 (defn create-profile-relations
   [conn profile]
-  (let [team    (teams/create-team conn {:profile-id (:id profile)
-                                         :name "Default"
-                                         :is-default true})
-        project (projects/create-project conn {:profile-id (:id profile)
-                                               :team-id (:id team)
-                                               :name "Drafts"
-                                               :is-default true})
-        params  {:team-id (:id team)
-                 :profile-id (:id profile)
-                 :project-id (:id project)
-                 :role :owner}]
-
-    (teams/create-team-role conn params)
-    (projects/create-project-role conn params)
-
+  (let [team (teams/create-team conn {:profile-id (:id profile)
+                                      :name "Default"
+                                      :is-default true})]
     (-> profile
         (profile/strip-private-attrs)
         (assoc :default-team-id (:id team))
-        (assoc :default-project-id (:id project)))))
+        (assoc :default-project-id (:default-project-id team)))))
 
 ;; --- MUTATION: Login
 
@@ -295,7 +283,8 @@
   (s/keys :req-un [::email ::password]
           :opt-un [::scope ::invitation-token]))
 
-(sv/defmethod ::login {:auth false :rlimit :password}
+(sv/defmethod ::login
+  {:auth false ::rlimit/permits (cf/get :rlimit-password)}
   [{:keys [pool session tokens] :as cfg} {:keys [email password] :as params}]
   (letfn [(check-password [profile password]
             (when (= (:password profile) "!")
@@ -346,9 +335,9 @@
 ;; --- MUTATION: Logout
 
 (s/def ::logout
-  (s/keys :req-un [::profile-id]))
+  (s/keys :opt-un [::profile-id]))
 
-(sv/defmethod ::logout
+(sv/defmethod ::logout {:auth false}
   [{:keys [session] :as cfg} _]
   (with-meta {}
     {:transform-response (:delete session)}))
@@ -357,11 +346,14 @@
 
 (defn- update-profile
   [conn {:keys [id fullname lang theme] :as params}]
-  (db/update! conn :profile
-              {:fullname fullname
-               :lang lang
-               :theme theme}
-              {:id id}))
+  (let [profile (db/update! conn :profile
+                            {:fullname fullname
+                             :lang lang
+                             :theme theme}
+                            {:id id})]
+    (-> profile
+        (profile/decode-profile-row)
+        (profile/strip-private-attrs))))
 
 (s/def ::update-profile
   (s/keys :req-un [::id ::fullname]
@@ -370,22 +362,27 @@
 (sv/defmethod ::update-profile
   [{:keys [pool] :as cfg} params]
   (db/with-atomic [conn pool]
-    (update-profile conn params)
-    nil))
+    (let [profile (update-profile conn params)]
+      (with-meta profile
+        {::audit/props (audit/profile->props profile)}))))
 
 ;; --- MUTATION: Update Password
 
 (declare validate-password!)
 (declare update-profile-password!)
+(declare invalidate-profile-session!)
 
 (s/def ::update-profile-password
   (s/keys :req-un [::profile-id ::password ::old-password]))
 
-(sv/defmethod ::update-profile-password {:rlimit :password}
+(sv/defmethod ::update-profile-password
+  {::rlimit/permits (cf/get :rlimit-password)}
   [{:keys [pool] :as cfg} {:keys [password] :as params}]
   (db/with-atomic [conn pool]
-    (let [profile (validate-password! conn params)]
+    (let [profile    (validate-password! conn params)
+          session-id (:app.rpc/session-id params)]
       (update-profile-password! conn (assoc profile :password password))
+      (invalidate-profile-session! conn (:id profile) session-id)
       nil)))
 
 (defn- validate-password!
@@ -402,6 +399,12 @@
               {:password (derive-password password)}
               {:id id}))
 
+(defn- invalidate-profile-session!
+  "Removes all sessions except the current one."
+  [conn profile-id session-id]
+  (let [sql "delete from http_session where profile_id = ? and id != ?"]
+    (:next.jdbc/update-count (db/exec-one! conn [sql profile-id session-id]))))
+
 ;; --- MUTATION: Update Photo
 
 (declare update-profile-photo)
@@ -413,14 +416,17 @@
   (s/keys :req-un [::profile-id ::file]))
 
 (sv/defmethod ::update-profile-photo
+  {::rlimit/permits (cf/get :rlimit-image)}
   [{:keys [pool storage] :as cfg} {:keys [profile-id file] :as params}]
   (db/with-atomic [conn pool]
     (media/validate-media-type (:content-type file) #{"image/jpeg" "image/png" "image/webp"})
+    (media/run {:cmd :info :input {:path (:tempfile file)
+                                   :mtype (:content-type file)}})
+
     (let [profile (db/get-by-id conn :profile profile-id)
-          _       (media/run cfg {:cmd :info :input {:path (:tempfile file)
-                                                     :mtype (:content-type file)}})
-          photo   (teams/upload-photo cfg params)
-          storage (assoc storage :conn conn)]
+          storage (media/configure-assets-storage storage conn)
+          cfg     (assoc cfg :storage storage)
+          photo   (teams/upload-photo cfg params)]
 
       ;; Schedule deletion of old photo
       (when-let [id (:photo-id profile)]
@@ -440,7 +446,7 @@
 ;; --- MUTATION: Request Email Change
 
 (declare request-email-change)
-(declare change-email-inmediatelly)
+(declare change-email-immediately)
 
 (s/def ::request-email-change
   (s/keys :req-un [::email]))
@@ -453,11 +459,12 @@
           params  (assoc params
                          :profile profile
                          :email (str/lower email))]
-      (if (cfg/get :smtp-enabled)
+      (if (or (cf/get :smtp-enabled)
+              (contains? cf/flags :smtp))
         (request-email-change cfg params)
-        (change-email-inmediatelly cfg params)))))
+        (change-email-immediately cfg params)))))
 
-(defn- change-email-inmediatelly
+(defn- change-email-immediately
   [{:keys [conn]} {:keys [profile email] :as params}]
   (when (not= email (:email profile))
     (check-profile-existence! conn params))
@@ -560,7 +567,8 @@
 (s/def ::recover-profile
   (s/keys :req-un [::token ::password]))
 
-(sv/defmethod ::recover-profile {:auth false :rlimit :password}
+(sv/defmethod ::recover-profile
+  {:auth false ::rlimit/permits (cf/get :rlimit-password)}
   [{:keys [pool tokens] :as cfg} {:keys [token password]}]
   (letfn [(validate-token [token]
             (let [tdata (tokens :verify {:token token :iss :password-recovery})]
@@ -586,11 +594,15 @@
   (db/with-atomic [conn pool]
     (let [profile (profile/retrieve-profile-data conn profile-id)
           props   (reduce-kv (fn [props k v]
-                               (if (nil? v)
-                                 (dissoc props k)
-                                 (assoc props k v)))
+                               ;; We don't accept namespaced keys
+                               (if (simple-ident? k)
+                                 (if (nil? v)
+                                   (dissoc props k)
+                                   (assoc props k v))
+                                 props))
                              (:props profile)
                              props)]
+
       (db/update! conn :profile
                   {:props (db/tjson props)}
                   {:id profile-id})
@@ -635,7 +647,7 @@
   (let [rows (db/exec! conn [sql:owned-teams profile-id])]
     ;; If we found owned teams with more than one profile we don't
     ;; allow delete profile until the user properly transfer ownership
-    ;; or explictly removes all participants from the team.
+    ;; or explicitly removes all participants from the team.
     (when (some #(> (:num-profiles %) 1) rows)
       (ex/raise :type :validation
                 :code :owner-teams-with-people

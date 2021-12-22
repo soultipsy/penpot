@@ -7,6 +7,7 @@
 (ns app.main.ui.workspace.sidebar.history
   (:require
    [app.common.data :as d]
+   [app.main.data.workspace.common :as dwc]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.icons :as i]
@@ -20,7 +21,7 @@
   (l/derived :workspace-undo st/state))
 
 (defn get-object
-  "Searchs for a shape inside the objects list or inside the undo history"
+  "Searches for a shape inside the objects list or inside the undo history"
   [id entries objects]
   (let [search-deleted-shape
         (fn [id entries]
@@ -143,7 +144,7 @@
     maybe-keyword))
 
 (defn select-entry
-  "Selects the entry the user will see inside a list of posible entries.
+  "Selects the entry the user will see inside a list of possible entries.
   Sometimes the result will be a combination."
   [candidates]
   (let [;; Group by id and type
@@ -249,7 +250,7 @@
 
        nil)]))
 
-(mf/defc history-entry [{:keys [locale entry disabled? current?]}]
+(mf/defc history-entry [{:keys [locale entry idx-entry disabled? current?]}]
   (let [hover? (mf/use-state false)
         show-detail? (mf/use-state false)]
     [:div.history-entry {:class (dom/classnames
@@ -259,14 +260,14 @@
                                  :show-detail @show-detail?)
                          :on-mouse-enter #(reset! hover? true)
                          :on-mouse-leave #(reset! hover? false)
-                         :on-click #(when (:detail entry)
-                                      (swap! show-detail? not))
-                         }
+                         :on-click (st/emitf (dwc/undo-to-index idx-entry))}
      [:div.history-entry-summary
       [:div.history-entry-summary-icon (entry->icon entry)]
       [:div.history-entry-summary-text  (entry->message locale entry)]
       (when (:detail entry)
-        [:div.history-entry-summary-button i/arrow-slide])]
+        [:div.history-entry-summary-button {:on-click #(when (:detail entry)
+                                                         (swap! show-detail? not))}
+         i/arrow-slide])]
 
      (when show-detail?
        [:& history-entry-details {:entry entry}])]))
@@ -287,6 +288,7 @@
              [:& history-entry {:key (str "entry-" idx-entry)
                                 :locale locale
                                 :entry entry
+                                :idx-entry idx-entry
                                 :current? (= idx-entry index)
                                 :disabled? (> idx-entry index)}])])]))
 

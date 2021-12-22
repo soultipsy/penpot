@@ -6,6 +6,7 @@
 
 (ns app.main.ui.workspace.shapes.text
   (:require
+   [app.common.logging :as log]
    [app.common.math :as mth]
    [app.main.data.workspace.texts :as dwt]
    [app.main.refs :as refs]
@@ -13,7 +14,6 @@
    [app.main.ui.shapes.shape :refer [shape-container]]
    [app.main.ui.shapes.text :as text]
    [app.util.dom :as dom]
-   [app.util.logging :as log]
    [app.util.object :as obj]
    [app.util.text-editor :as ted]
    [app.util.timers :as timers]
@@ -110,7 +110,7 @@
 
     [:> shape-container {:shape shape}
      ;; We keep hidden the shape when we're editing so it keeps track of the size
-     ;; and updates the selrect acordingly
+     ;; and updates the selrect accordingly
      [:g.text-shape {:opacity (when edition? 0)
                      :pointer-events "none"}
 

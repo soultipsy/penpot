@@ -10,15 +10,15 @@
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
    [app.common.math :as mth]
+   [app.common.path.commands :as upc]
+   [app.common.path.subpaths :as ups]
    [app.main.data.workspace.path.common :as common]
    [app.main.streams :as ms]
-   [app.util.path.commands :as upc]
-   [app.util.path.subpaths :as ups]
    [potok.core :as ptk]))
 
 (defn end-path-event? [event]
   (or (= (ptk/type event) ::common/finish-path)
-      (= (ptk/type event) :esc-pressed)
+      (= (ptk/type event) :app.main.data.workspace.path.shortcuts/esc-pressed)
       (= :app.main.data.workspace.common/clear-edition-mode (ptk/type event))
       (= :app.main.data.workspace/finalize-page (ptk/type event))
       (= event :interrupt) ;; ESC
@@ -108,7 +108,7 @@
                    :params position})))
 
 (defn append-node
-  "Creates a new node in the path. Usualy used when drawing."
+  "Creates a new node in the path. Usually used when drawing."
   [shape position prev-point prev-handler]
   (let [command (next-node shape position prev-point prev-handler)]
     (-> shape

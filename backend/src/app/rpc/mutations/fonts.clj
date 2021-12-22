@@ -6,6 +6,7 @@
 
 (ns app.rpc.mutations.fonts
   (:require
+   [app.common.exceptions :as ex]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
    [app.config :as cf]
@@ -13,9 +14,9 @@
    [app.media :as media]
    [app.rpc.queries.teams :as teams]
    [app.storage :as sto]
+   [app.util.rlimit :as rlimit]
    [app.util.services :as sv]
    [app.util.time :as dt]
-   [app.worker :as wrk]
    [clojure.spec.alpha :as s]))
 
 (declare create-font-variant)
@@ -38,6 +39,7 @@
                    ::font-id ::font-family ::font-weight ::font-style]))
 
 (sv/defmethod ::create-font-variant
+  {::rlimit/permits (cf/get :rlimit-font)}
   [{:keys [pool] :as cfg} {:keys [team-id profile-id] :as params}]
   (db/with-atomic [conn pool]
     (let [cfg (assoc cfg :conn conn)]
@@ -46,8 +48,9 @@
 
 (defn create-font-variant
   [{:keys [conn storage] :as cfg} {:keys [data] :as params}]
-  (let [data    (media/run cfg {:cmd :generate-fonts :input data :rlimit :font})
-        storage (assoc storage :conn conn)
+  (let [data    (media/run {:cmd :generate-fonts :input data})
+        storage (media/configure-assets-storage storage conn)
+
         otf     (when-let [fdata (get data "font/otf")]
                   (sto/put-object storage {:content (sto/content fdata)
                                            :content-type "font/otf"}))
@@ -63,6 +66,13 @@
         woff2   (when-let [fdata (get data "font/woff2")]
                   (sto/put-object storage {:content (sto/content fdata)
                                            :content-type "font/woff2"}))]
+
+    (when (and (nil? otf)
+               (nil? ttf)
+               (nil? woff1)
+               (nil? woff2))
+      (ex/raise :type :validation
+                :code :invalid-font-upload))
 
     (db/insert! conn :team-font-variant
                 {:id (uuid/next)
@@ -118,13 +128,6 @@
   [{:keys [pool] :as cfg} {:keys [id team-id profile-id] :as params}]
   (db/with-atomic [conn pool]
     (teams/check-edition-permissions! conn profile-id team-id)
-
-    ;; Schedule object deletion
-    (wrk/submit! {::wrk/task :delete-object
-                  ::wrk/delay cf/deletion-delay
-                  ::wrk/conn conn
-                  :id id
-                  :type :team-font-variant})
 
     (db/update! conn :team-font-variant
                 {:deleted-at (dt/now)}

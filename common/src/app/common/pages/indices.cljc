@@ -12,28 +12,25 @@
    [clojure.set :as set]))
 
 (defn calculate-frame-z-index [z-index frame-id objects]
-  (let [is-frame? (fn [id] (= :frame (get-in objects [id :type])))
+  (let [is-frame?    (fn [id] (= :frame (get-in objects [id :type])))
         frame-shapes (->> objects (vals) (filterv #(= (:frame-id %) frame-id)))
-        children (or (get-in objects [frame-id :shapes]) [])]
+        children     (or (get-in objects [frame-id :shapes]) [])]
 
     (if (empty? children)
       z-index
-
       (loop [current (peek children)
              pending (pop children)
              current-idx (count frame-shapes)
              z-index z-index]
 
-        (let [children (get-in objects [current :shapes])
+        (let [children  (get-in objects [current :shapes])
               is-frame? (is-frame? current)
-              pending (if (not is-frame?)
-                        (d/concat pending children)
-                        pending)]
+              pending   (if (not is-frame?)
+                          (d/concat-vec pending children)
+                          pending)]
 
           (if (empty? pending)
-            (-> z-index
-                (assoc current current-idx))
-
+            (assoc z-index current current-idx)
             (recur (peek pending)
                    (pop pending)
                    (dec current-idx)
@@ -95,16 +92,24 @@
           (map #(vector (:id %) (shape->parents %)))
           (into {})))))
 
-(defn create-mask-index
+(defn create-clip-index
   "Retrieves the mask information for an object"
   [objects parents-index]
-  (let [retrieve-masks
+  (let [retrieve-clips
         (fn [_ parents]
-          ;; TODO: use transducers?
-          (->> parents
-               (map #(get objects %))
-               (filter #(:masked-group? %))
-               ;; Retrieve the masking element
-               (mapv #(get objects (->> % :shapes first)))))]
+          (let [lookup-object (fn [id] (get objects id))
+                get-clip-parents
+                (fn [shape]
+                  (cond-> []
+                    (:masked-group? shape)
+                    (conj (get objects (->> shape :shapes first)))
+
+                    (= :bool (:type shape))
+                    (conj shape)))]
+
+            (into []
+                  (comp (map lookup-object)
+                        (mapcat get-clip-parents))
+                  parents)))]
     (->> parents-index
-         (d/mapm retrieve-masks))))
+         (d/mapm retrieve-clips))))

@@ -54,21 +54,23 @@
   (ptk/reify ::finalize-editor-state
     ptk/WatchEvent
     (watch [_ state _]
-      (let [content (-> (get-in state [:workspace-editor-state id])
-                        (ted/get-editor-current-content))]
+      (when (dwc/initialized? state)
+        (let [content (-> (get-in state [:workspace-editor-state id])
+                          (ted/get-editor-current-content))]
+          (if (ted/content-has-text? content)
+            (let [content (d/merge (ted/export-content content)
+                                   (dissoc (:content shape) :children))]
+              (rx/merge
+               (rx/of (update-editor-state shape nil))
+               (when (and (not= content (:content shape))
+                          (some? (:current-page-id state)))
+                 (rx/of
+                  (dch/update-shapes [id] #(assoc % :content content))
+                  (dwu/commit-undo-transaction)))))
 
-        (if (ted/content-has-text? content)
-          (let [content (d/merge (ted/export-content content)
-                                 (dissoc (:content shape) :children))]
-            (rx/merge
-             (rx/of (update-editor-state shape nil))
-             (when (and (not= content (:content shape))
-                        (some? (:current-page-id state)))
-               (rx/of
-                (dch/update-shapes [id] #(assoc % :content content))
-                (dwu/commit-undo-transaction)))))
-          (rx/of (dws/deselect-shape id)
-                 (dwc/delete-shapes #{id})))))))
+            (when (some? id)
+              (rx/of (dws/deselect-shape id)
+                     (dwc/delete-shapes #{id})))))))))
 
 (defn initialize-editor-state
   [{:keys [id content] :as shape} decorator]
@@ -178,12 +180,10 @@
                 shape     (get objects id)
 
                 merge-fn  (fn [node attrs]
-                            (reduce-kv (fn [node k v]
-                                         (if (= (get node k) v)
-                                           (dissoc node k)
-                                           (assoc node k v)))
-                                       node
-                                       attrs))
+                            (reduce-kv
+                             (fn [node k v] (assoc node k v))
+                             node
+                             attrs))
 
                 update-fn #(update-shape % txt/is-paragraph-node? merge-fn attrs)
                 shape-ids (cond (= (:type shape) :text)  [id]
@@ -300,7 +300,7 @@
             ;; Stop buffering after time without resizes
             stop-buffer (->> resize-events (rx/debounce 100))
 
-            ;; Agregates the resizes so only send the resize when the sizes are stable
+            ;; Aggregates the resizes so only send the resize when the sizes are stable
             resize-batch
             (->> resize-events
                  (rx/take-until stop-buffer)

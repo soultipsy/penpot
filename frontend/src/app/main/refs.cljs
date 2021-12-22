@@ -1,4 +1,3 @@
-
 ;; This Source Code Form is subject to the terms of the Mozilla Public
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -11,6 +10,7 @@
    [app.common.data :as d]
    [app.common.geom.shapes :as gsh]
    [app.common.pages :as cp]
+   [app.common.path.commands :as upc]
    [app.main.data.workspace.state-helpers :as wsh]
    [app.main.store :as st]
    [okulary.core :as l]))
@@ -38,6 +38,9 @@
 (def threads-ref
   (l/derived :comment-threads st/state))
 
+(def share-links
+  (l/derived :share-links st/state))
+
 ;; ---- Dashboard refs
 
 (def dashboard-local
@@ -57,12 +60,6 @@
 
 (def dashboard-search-result
   (l/derived :dashboard-search-result st/state))
-
-(def dashboard-team
-  (l/derived (fn [state]
-               (let [team-id (:current-team-id state)]
-                 (get-in state [:teams team-id])))
-             st/state))
 
 (def dashboard-team-stats
   (l/derived :dashboard-team-stats st/state))
@@ -110,12 +107,17 @@
                               :edit-path
                               :tooltip
                               :panning
+                              :zooming
                               :picking-color?
                               :transform
                               :hover
                               :modifiers
                               :selrect
                               :show-distances?])
+             workspace-local =))
+
+(def local-displacement
+  (l/derived #(select-keys % [:modifiers :selected])
              workspace-local =))
 
 (def selected-zoom
@@ -235,16 +237,45 @@
 
   ([ids {:keys [with-modifiers?]
          :or { with-modifiers? false }}]
-   (l/derived (fn [state]
-                (let [objects (wsh/lookup-page-objects state)
-                      modifiers (:workspace-modifiers state)
-                      objects (cond-> objects
-                                with-modifiers?
-                                (gsh/merge-modifiers modifiers))
-                      xform (comp (map #(get objects %))
-                                  (remove nil?))]
-                  (into [] xform ids)))
-              st/state =)))
+   (let [selector
+         (fn [state]
+           (let [objects (wsh/lookup-page-objects state)
+                 modifiers (:workspace-modifiers state)
+                 ;; FIXME: Improve performance
+                 objects (cond-> objects
+                           with-modifiers?
+                           (gsh/merge-modifiers modifiers))
+                 xform (comp (map (d/getf objects))
+                             (remove nil?))]
+             (into [] xform ids)))]
+     (l/derived selector st/state =))))
+
+(defn- set-content-modifiers [state]
+  (fn [id shape]
+    (let [content-modifiers (get-in state [:workspace-local :edit-path id :content-modifiers])]
+      (if (some? content-modifiers)
+        (update shape :content upc/apply-content-modifiers content-modifiers)
+        shape))))
+
+(defn select-children [id]
+  (let [selector
+        (fn [state]
+          (let [objects (wsh/lookup-page-objects state)
+
+                modifiers (-> (:workspace-modifiers state))
+                {selected :selected disp-modifiers :modifiers}
+                (-> (:workspace-local state)
+                    (select-keys [:modifiers :selected]))
+
+                modifiers
+                (d/deep-merge
+                 modifiers
+                 (into {} (map #(vector % {:modifiers disp-modifiers})) selected))]
+
+            (as-> (cp/select-children id objects) $
+              (gsh/merge-modifiers $ modifiers)
+              (d/mapm (set-content-modifiers state) $))))]
+    (l/derived selector st/state =)))
 
 (def selected-data
   (l/derived #(let [selected (wsh/lookup-selected %)
@@ -269,25 +300,25 @@
 
 (def selected-shapes-with-children
   (letfn [(selector [{:keys [selected objects]}]
-            (let [children (->> selected
-                                (mapcat #(cp/get-children % objects))
-                                (filterv (comp not nil?)))]
-              (into selected children)))]
-    (l/derived selector selected-data =)))
-
-(def selected-objects-with-children
-  (letfn [(selector [{:keys [selected objects]}]
-            (let [children (->> selected
-                                (mapcat #(cp/get-children % objects))
-                                (filterv (comp not nil?)))
-                  shapes   (into selected children)]
-              (mapv #(get objects %) shapes)))]
+            (let [xform (comp (remove nil?)
+                              (mapcat #(cp/get-children % objects)))
+                  shapes (into selected xform selected)]
+              (mapv (d/getf objects) shapes)))]
     (l/derived selector selected-data =)))
 
 ;; ---- Viewer refs
 
+(def viewer-file
+  (l/derived :viewer-file st/state))
+
+(def viewer-project
+  (l/derived :viewer-file st/state))
+
 (def viewer-data
-  (l/derived :viewer-data st/state))
+  (l/derived :viewer st/state))
+
+(def viewer-state
+  (l/derived :viewer st/state))
 
 (def viewer-local
   (l/derived :viewer-local st/state))

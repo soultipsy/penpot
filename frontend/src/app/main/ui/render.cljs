@@ -16,7 +16,9 @@
    [app.main.exports :as exports]
    [app.main.repo :as repo]
    [app.main.store :as st]
+   [app.main.ui.context :as muc]
    [app.main.ui.shapes.embed :as embed]
+   [app.main.ui.shapes.export :as ed]
    [app.main.ui.shapes.filters :as filters]
    [app.main.ui.shapes.shape :refer [shape-container]]
    [app.util.dom :as dom]
@@ -24,13 +26,40 @@
    [cuerdas.core :as str]
    [rumext.alpha :as mf]))
 
+(defn calc-bounds
+  [object objects]
+
+  (let [xf-get-bounds (comp  (map #(get objects %)) (map #(calc-bounds % objects)))
+        padding (filters/calculate-padding object)
+        obj-bounds
+        (-> (filters/get-filters-bounds object)
+            (update :x - padding)
+            (update :y - padding)
+            (update :width + (* 2 padding))
+            (update :height + (* 2 padding)))]
+
+    (cond
+      (and (= :group (:type object))
+           (:masked-group? object))
+      (calc-bounds (get objects (first (:shapes object))) objects)
+
+      (= :group (:type object))
+      (->> (:shapes object)
+           (into [obj-bounds] xf-get-bounds)
+           (gsh/join-rects))
+
+      :else
+      obj-bounds)))
+
 (mf/defc object-svg
   {::mf/wrap [mf/memo]}
-  [{:keys [objects object-id zoom] :or {zoom 1} :as props}]
+  [{:keys [objects object-id zoom render-texts?] :or {zoom 1} :as props}]
   (let [object   (get objects object-id)
         frame-id (if (= :frame (:type object))
                    (:id object)
                    (:frame-id object))
+
+        include-metadata? (mf/use-ctx ed/include-metadata-ctx)
 
         modifier (-> (gpt/point (:x object) (:y object))
                      (gpt/negate)
@@ -44,15 +73,10 @@
         objects  (reduce updt-fn objects mod-ids)
         object   (get objects object-id)
 
-        ;; We need to get the shadows/blurs paddings to create the viewbox properly
-        {:keys [x y width height]} (filters/get-filters-bounds object)
+        {:keys [x y width height] :as bs} (calc-bounds object objects)
+        [_ _ width height :as coords] (->> [x y width height] (map #(* % zoom)))
 
-        x        (* x zoom)
-        y        (* y zoom)
-        width    (* width zoom)
-        height   (* height zoom)
-
-        vbox     (str/join " " [x y width height])
+        vbox (str/join " " coords)
 
         frame-wrapper
         (mf/use-memo
@@ -68,12 +92,16 @@
         (mf/use-memo
          (mf/deps objects)
          #(exports/shape-wrapper-factory objects))
-        ]
+
+        text-shapes
+        (->> objects
+             (filter (fn [[_ shape]] (= :text (:type shape))))
+             (mapv second))]
 
     (mf/use-effect
      (mf/deps width height)
-     #(dom/set-page-style {:size (str (mth/round width) "px "
-                                      (mth/round height) "px")}))
+     #(dom/set-page-style {:size (str (mth/ceil width) "px "
+                                      (mth/ceil height) "px")}))
 
     [:& (mf/provider embed/context) {:value true}
      [:svg {:id "screenshot"
@@ -81,15 +109,31 @@
             :width width
             :height height
             :version "1.1"
-            :xmlnsXlink "http://www.w3.org/1999/xlink"
             :xmlns "http://www.w3.org/2000/svg"
-            :xmlns:penpot "https://penpot.app/xmlns"}
+            :xmlnsXlink "http://www.w3.org/1999/xlink"
+            :xmlns:penpot (when include-metadata? "https://penpot.app/xmlns")
+            ;; Fix Chromium bug about color of html texts
+            ;; https://bugs.chromium.org/p/chromium/issues/detail?id=1244560#c5
+            :style {:-webkit-print-color-adjust :exact}}
 
       (case (:type object)
         :frame [:& frame-wrapper {:shape object :view-box vbox}]
         :group [:> shape-container {:shape object}
                 [:& group-wrapper {:shape object}]]
-        [:& shape-wrapper {:shape object}])]]))
+        [:& shape-wrapper {:shape object}])]
+
+     ;; Auxiliary SVG for rendering text-shapes
+     (when render-texts?
+       (for [object text-shapes]
+         [:& (mf/provider muc/text-plain-colors-ctx) {:value true}
+          [:svg {:id (str "screenshot-text-" (:id object))
+                 :view-box (str "0 0 " (:width object) " " (:height object))
+                 :width (:width object)
+                 :height (:height object)
+                 :version "1.1"
+                 :xmlns "http://www.w3.org/2000/svg"
+                 :xmlnsXlink "http://www.w3.org/1999/xlink"}
+           [:& shape-wrapper {:shape (-> object (assoc :x 0 :y 0))}]]]))]))
 
 (defn- adapt-root-frame
   [objects object-id]
@@ -109,7 +153,7 @@
 ;; backend entry point for download only the data of single page.
 
 (mf/defc render-object
-  [{:keys [file-id page-id object-id] :as props}]
+  [{:keys [file-id page-id object-id render-texts?] :as props}]
   (let [objects (mf/use-state nil)]
     (mf/use-effect
      (mf/deps file-id page-id object-id)
@@ -129,6 +173,7 @@
     (when @objects
       [:& object-svg {:objects @objects
                       :object-id object-id
+                      :render-texts? render-texts?
                       :zoom 1}])))
 
 (mf/defc render-sprite

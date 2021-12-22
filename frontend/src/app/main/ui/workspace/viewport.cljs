@@ -6,6 +6,7 @@
 
 (ns app.main.ui.workspace.viewport
   (:require
+   [app.common.colors :as clr]
    [app.common.data :as d]
    [app.common.geom.shapes :as gsh]
    [app.main.refs :as refs]
@@ -65,14 +66,16 @@
         objects           (mf/use-memo
                            (mf/deps objects object-modifiers)
                            #(gsh/merge-modifiers objects object-modifiers))
-        background        (get options :background "#E8E9EA")
+        background        (get options :background clr/canvas)
 
         ;; STATE
         alt?              (mf/use-state false)
         ctrl?             (mf/use-state false)
+        space?            (mf/use-state false)
         cursor            (mf/use-state (utils/get-cursor :pointer-inner))
         hover-ids         (mf/use-state nil)
         hover             (mf/use-state nil)
+        hover-disabled?   (mf/use-state false)
         frame-hover       (mf/use-state nil)
         active-frames     (mf/use-state {})
 
@@ -113,7 +116,8 @@
         on-drag-enter     (actions/on-drag-enter)
         on-drag-over      (actions/on-drag-over)
         on-drop           (actions/on-drop file viewport-ref zoom)
-        on-mouse-down     (actions/on-mouse-down @hover selected edition drawing-tool text-editing? node-editing? drawing-path? create-comment?)
+        on-mouse-down     (actions/on-mouse-down @hover selected edition drawing-tool text-editing? node-editing?
+                                                 drawing-path? create-comment? space? viewport-ref zoom)
         on-mouse-up       (actions/on-mouse-up disable-paste)
         on-pointer-down   (actions/on-pointer-down)
         on-pointer-enter  (actions/on-pointer-enter in-viewport?)
@@ -150,14 +154,15 @@
     (hooks/setup-viewport-size viewport-ref)
     (hooks/setup-cursor cursor alt? panning drawing-tool drawing-path? node-editing?)
     (hooks/setup-resize layout viewport-ref)
-    (hooks/setup-keyboard alt? ctrl?)
-    (hooks/setup-hover-shapes page-id move-stream selected objects transform selected ctrl? hover hover-ids zoom)
+    (hooks/setup-keyboard alt? ctrl? space?)
+    (hooks/setup-hover-shapes page-id move-stream objects transform selected ctrl? hover hover-ids @hover-disabled? zoom)
     (hooks/setup-viewport-modifiers modifiers selected objects render-ref)
     (hooks/setup-shortcuts node-editing? drawing-path?)
     (hooks/setup-active-frames objects vbox hover active-frames)
 
     [:div.viewport
      [:div.viewport-overlays
+
       [:& wtr/frame-renderer {:objects objects
                               :background background}]
 
@@ -193,11 +198,12 @@
 
       [:& use/export-page {:options options}]
 
-      [:& (mf/provider embed/context) {:value true}
-       ;; Render root shape
-       [:& shapes/root-shape {:key page-id
-                              :objects objects
-                              :active-frames @active-frames}]]]
+      [:& (mf/provider use/include-metadata-ctx) {:value false}
+       [:& (mf/provider embed/context) {:value true}
+        ;; Render root shape
+        [:& shapes/root-shape {:key page-id
+                               :objects objects
+                               :active-frames @active-frames}]]]]
 
      [:svg.viewport-controls
       {:xmlns "http://www.w3.org/2000/svg"
@@ -226,7 +232,6 @@
        :on-pointer-up    on-pointer-up}
 
       [:g {:style {:pointer-events (if disable-events? "none" "auto")}}
-
        (when show-outlines?
          [:& outline/shape-outlines
           {:objects objects
@@ -264,6 +269,17 @@
          :on-frame-enter on-frame-enter
          :on-frame-leave on-frame-leave
          :on-frame-select on-frame-select}]
+
+       (when show-prototypes?
+         [:& widgets/frame-flows
+          {:flows (:flows options)
+           :objects objects
+           :selected selected
+           :zoom zoom
+           :modifiers modifiers
+           :on-frame-enter on-frame-enter
+           :on-frame-leave on-frame-leave
+           :on-frame-select on-frame-select}])
 
        (when show-gradient-handlers?
          [:& gradients/gradient-handlers
@@ -318,7 +334,8 @@
 
        (when show-prototypes?
          [:& interactions/interactions
-          {:selected selected}])
+          {:selected selected
+           :hover-disabled? hover-disabled?}])
 
        (when show-selrect?
          [:& widgets/selection-rect {:data selrect

@@ -10,13 +10,13 @@
    [app.browser :as bw]
    [app.common.data :as d]
    [app.common.exceptions :as ex :include-macros true]
+   [app.common.logging :as l]
    [app.common.pages :as cp]
    [app.common.spec :as us]
    [app.config :as cf]
    [cljs.spec.alpha :as s]
    [cuerdas.core :as str]
    [lambdaisland.uri :as u]
-   [lambdaisland.glogi :as log]
    [promesa.core :as p]))
 
 (defn create-cookie
@@ -29,7 +29,7 @@
      :value token}))
 
 (defn screenshot-object
-  [browser {:keys [file-id page-id object-id token scale type]}]
+  [{:keys [file-id page-id object-id token scale type]}]
   (letfn [(handle [page]
             (let [path   (str "/render-object/" file-id "/" page-id "/" object-id)
                   uri    (-> (u/uri (cf/get :public-uri))
@@ -39,7 +39,7 @@
               (screenshot page (str uri) cookie)))
 
           (screenshot [page uri cookie]
-            (log/info :uri uri)
+            (l/info :uri uri)
             (let [viewport {:width 1920
                             :height 1080
                             :scale scale}
@@ -55,7 +55,7 @@
                    :png  (bw/screenshot dom {:omit-background? true :type type})
                    :jpeg (bw/screenshot dom {:omit-background? false :type type}))))))]
 
-    (bw/exec! browser handle)))
+    (bw/exec! handle)))
 
 (s/def ::name ::us/string)
 (s/def ::suffix ::us/string)
@@ -74,22 +74,16 @@
 (defn render
   [params]
   (us/assert ::render-params params)
-  (let [browser @bw/instance]
-    (when-not browser
-      (ex/raise :type :internal
-                :code :browser-not-ready
-                :hint "browser cluster is not initialized yet"))
-
-    (p/let [content (screenshot-object browser params)]
-      {:content content
-       :filename (or (:filename params)
-                     (str (:name params)
-                          (:suffix params "")
-                          (case (:type params)
-                            :png ".png"
-                            :jpeg ".jpg")))
-       :length (alength content)
-       :mime-type (case (:type params)
-                    :png "image/png"
-                    :jpeg "image/jpeg")})))
+  (p/let [content (screenshot-object params)]
+    {:content content
+     :filename (or (:filename params)
+                   (str (:name params)
+                        (:suffix params "")
+                        (case (:type params)
+                          :png ".png"
+                          :jpeg ".jpg")))
+     :length (alength content)
+     :mime-type (case (:type params)
+                  :png "image/png"
+                  :jpeg "image/jpeg")}))
 

@@ -17,11 +17,15 @@
  {:exclude-files
   ["data_readers.clj"
    "app/util/perf.cljs"
+   "app/common/logging.cljc"
    "app/common/exceptions.cljc"]}
 
  :linters
  {:unsorted-required-namespaces
   {:level :warning}
+
+  :potok/reify-type
+  {:level :error}
 
   :unresolved-namespace
   {:level :warning

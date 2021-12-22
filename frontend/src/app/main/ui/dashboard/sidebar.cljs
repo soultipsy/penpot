@@ -8,8 +8,9 @@
   (:require
    [app.common.data :as d]
    [app.common.spec :as us]
-   [app.config :as cfg]
+   [app.config :as cf]
    [app.main.data.dashboard :as dd]
+   [app.main.data.events :as ev]
    [app.main.data.messages :as dm]
    [app.main.data.modal :as modal]
    [app.main.data.users :as du]
@@ -27,6 +28,7 @@
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.object :as obj]
    [app.util.router :as rt]
+   [beicon.core :as rx]
    [cljs.spec.alpha :as s]
    [goog.functions :as f]
    [rumext.alpha :as mf]))
@@ -69,7 +71,8 @@
         (mf/use-callback
          (mf/deps item)
          (fn [name]
-           (st/emit! (dd/rename-project (assoc item :name name)))
+           (st/emit! (-> (dd/rename-project (assoc item :name name))
+                         (with-meta {::ev/origin "dashboard:sidebar"})))
            (swap! local assoc :edition? false)))
 
         on-drag-enter
@@ -214,7 +217,7 @@
        [:* {:key (:id team)}
         [:li.team-name {:on-click (partial team-selected (:id team))}
          [:span.team-icon
-          [:img {:src (cfg/resolve-team-photo-url team)}]]
+          [:img {:src (cf/resolve-team-photo-url team)}]]
          [:span.team-text {:title (:name team)} (:name team)]]])
 
      [:hr]
@@ -228,11 +231,14 @@
 (mf/defc leave-and-reassign-modal
   {::mf/register modal/components
    ::mf/register-as ::leave-and-reassign}
-  [{:keys [members profile team accept]}]
+  [{:keys [team accept]}]
   (let [form        (fm/use-form :spec ::leave-modal-form :initial {})
-        members     (some->> members (filterv #(not= (:id %) (:id profile))))
+
+        members-map (mf/deref refs/dashboard-team-members)
+        members     (vals members-map)
+
         options     (into [{:value ""
-                            :label (tr "modals.leave-and-reassign.select-memeber-to-promote")}]
+                            :label (tr "modals.leave-and-reassign.select-member-to-promote")}]
                           (map #(hash-map :label (:name %) :value (str (:id %))) members))
 
         on-cancel   (st/emitf (modal/hide))
@@ -282,21 +288,39 @@
         members-map (mf/deref refs/dashboard-team-members)
         members     (vals members-map)
 
-        on-rename-clicked
-        (st/emitf (modal/show :team-form {:team team}))
-
-        on-leaved-success
+        on-success
         (fn []
-          (st/emit! (modal/hide)
-                    (dd/go-to-projects (:default-team-id profile))))
+          (st/emit! (dd/go-to-projects (:default-team-id profile))
+                    (modal/hide)
+                    (du/fetch-teams)))
+
+        on-error
+        (fn [{:keys [code] :as error}]
+          (condp = code
+            :no-enough-members-for-leave
+            (rx/of (dm/error (tr "errors.team-leave.insufficient-members")))
+
+            :member-does-not-exist
+            (rx/of (dm/error (tr "errors.team-leave.member-does-not-exists")))
+
+            :owner-cant-leave-team
+            (rx/of (dm/error (tr "errors.team-leave.owner-cant-leave")))
+
+            (rx/throw error)))
 
         leave-fn
-        (st/emitf (dd/leave-team (with-meta {} {:on-success on-leaved-success})))
-
-        leave-and-reassign-fn
         (fn [member-id]
-          (let [params {:reassign-to member-id}]
-            (st/emit! (dd/leave-team (with-meta params {:on-success on-leaved-success})))))
+          (let [params (cond-> {} (uuid? member-id) (assoc :reassign-to member-id))]
+            (st/emit! (dd/leave-team (with-meta params
+                                       {:on-success on-success
+                                        :on-error on-error})))))
+        delete-fn
+        (fn []
+          (st/emit! (dd/delete-team (with-meta team {:on-success on-success
+                                                     :on-error on-error}))))
+        on-rename-clicked
+        (fn []
+          (st/emit! (modal/show :team-form {:team team})))
 
         on-leave-clicked
         (st/emitf (modal/show
@@ -307,15 +331,13 @@
                     :on-accept leave-fn}))
 
         on-leave-as-owner-clicked
-        (st/emitf (modal/show
-                   {:type ::leave-and-reassign
-                    :profile profile
-                    :team team
-                    :members members
-                    :accept leave-and-reassign-fn}))
-
-        delete-fn
-        (st/emitf (dd/delete-team (with-meta team {:on-success on-leaved-success})))
+        (fn []
+          (st/emit! (dd/fetch-team-members)
+                    (modal/show
+                     {:type ::leave-and-reassign
+                      :profile profile
+                      :team team
+                      :accept leave-fn})))
 
         on-delete-clicked
         (st/emitf
@@ -333,14 +355,14 @@
      [:li {:on-click on-rename-clicked} (tr "labels.rename")]
 
      (cond
-       (:is-owner team)
+       (get-in team [:permissions :is-owner])
        [:li {:on-click on-leave-as-owner-clicked} (tr "dashboard.leave-team")]
 
        (> (count members) 1)
        [:li {:on-click on-leave-clicked}  (tr "dashboard.leave-team")])
 
 
-     (when (:is-owner team)
+     (when (get-in team [:permissions :is-owner])
        [:li {:on-click on-delete-clicked} (tr "dashboard.delete-team")])]))
 
 
@@ -358,7 +380,7 @@
           [:span.team-text (tr "dashboard.default-team-name")]]
          [:div.team-name
           [:span.team-icon
-           [:img {:src (cfg/resolve-team-photo-url team)}]]
+           [:img {:src (cf/resolve-team-photo-url team)}]]
           [:span.team-text {:title (:name team)} (:name team)]])
 
        [:span.switch-icon
@@ -468,7 +490,7 @@
 (mf/defc profile-section
   [{:keys [profile team] :as props}]
   (let [show  (mf/use-state false)
-        photo (cfg/resolve-profile-photo-url profile)
+        photo (cf/resolve-profile-photo-url profile)
 
         on-click
         (mf/use-callback
@@ -492,11 +514,11 @@
        [:li {:on-click (partial on-click :settings-password)}
         [:span.icon i/lock]
         [:span.text (tr "labels.password")]]
-       [:li {:on-click (partial on-click (du/logout))}
+       [:li {:on-click #(on-click (du/logout) %)}
         [:span.icon i/exit]
         [:span.text (tr "labels.logout")]]
 
-       (when cfg/feedback-enabled
+       (when (contains? @cf/flags :user-feedback)
          [:li.feedback {:on-click (partial on-click :settings-feedback)}
           [:span.icon i/msg-info]
           [:span.text (tr "labels.give-feedback")]

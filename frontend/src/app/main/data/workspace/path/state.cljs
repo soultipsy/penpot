@@ -6,8 +6,7 @@
 
 (ns app.main.data.workspace.path.state
   (:require
-   [app.common.data :as d]
-   [app.util.path.shapes-to-path :as upsp]))
+   [app.common.path.shapes-to-path :as upsp]))
 
 (defn get-path-id
   "Retrieves the currently editing path id"
@@ -19,19 +18,19 @@
   [state & ks]
   (let [edit-id  (get-in state [:workspace-local :edition])
         page-id  (:current-page-id state)]
-    (d/concat
-     (if edit-id
-       [:workspace-data :pages-index page-id :objects edit-id]
-       [:workspace-drawing :object])
-     ks)))
+    (into (if edit-id
+            [:workspace-data :pages-index page-id :objects edit-id]
+            [:workspace-drawing :object])
+          ks)))
 
 (defn get-path
-  "Retrieves the location of the path object and additionaly can pass
+  "Retrieves the location of the path object and additionally can pass
   the arguments. This location can be used in get-in, assoc-in... functions"
   [state & ks]
   (let [path-loc (get-path-location state)
         shape (-> (get-in state path-loc)
-                  (upsp/convert-to-path))]
+                  ;; Empty map because we know the current shape will not have children
+                  (upsp/convert-to-path {}))]
 
     (if (empty? ks)
       shape

@@ -6,9 +6,11 @@
 
 (ns app.main.ui.workspace.colorpicker
   (:require
+   [app.common.colors :as clr]
    [app.main.data.modal :as modal]
    [app.main.data.workspace.colors :as dc]
    [app.main.data.workspace.libraries :as dwl]
+   [app.main.data.workspace.undo :as dwu]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.icons :as i]
@@ -20,7 +22,7 @@
    [app.main.ui.workspace.colorpicker.ramp :refer [ramp-selector]]
    [app.util.color :as uc]
    [app.util.dom :as dom]
-   [app.util.i18n :as i18n :refer [t]]
+   [app.util.i18n :as i18n :refer [tr]]
    [cuerdas.core :as str]
    [okulary.core :as l]
    [rumext.alpha :as mf]))
@@ -36,9 +38,6 @@
 (def picked-color-select
   (l/derived :picked-color-select refs/workspace-local))
 
-(def picked-shift?
-  (l/derived :picked-shift? refs/workspace-local))
-
 (def viewport
   (l/derived (l/in [:workspace-local :vport]) st/state))
 
@@ -51,7 +50,7 @@
 ;; --- Color Picker Modal
 
 (defn color->components [value opacity]
-  (let [value (if (uc/hex? value) value "#000000")
+  (let [value (if (uc/hex? value) value clr/black)
         [r g b] (uc/hex->rgb value)
         [h s v] (uc/hex->hsv value)]
 
@@ -113,7 +112,6 @@
   [{:keys [data disable-gradient disable-opacity on-change on-accept]}]
   (let [state (mf/use-state (data->state data))
         active-tab (mf/use-state :ramp #_:harmony #_:hsva)
-        locale (mf/deref i18n/locale)
 
         ref-picker (mf/use-ref)
 
@@ -141,12 +139,13 @@
                             editing-stop (update-in [:stops editing-stop] merge changes)))
             (reset! dirty? true)))
 
-        handle-click-picker (fn []
-                              (if picking-color?
-                                (do (modal/disallow-click-outside!)
-                                    (st/emit! (dc/stop-picker)))
-                                (do (modal/allow-click-outside!)
-                                    (st/emit! (dc/start-picker)))))
+        handle-click-picker
+        (fn []
+          (if picking-color?
+            (do (modal/disallow-click-outside!)
+                (st/emit! (dc/stop-picker)))
+            (do (modal/allow-click-outside!)
+                (st/emit! (dc/start-picker)))))
 
         handle-change-stop
         (fn [offset]
@@ -203,10 +202,10 @@
                                         h
                                         (str (* s 100) "%")
                                         (str (* l 100) "%")))]
-              (dom/set-css-property node "--color" (str/join ", " rgb))
-              (dom/set-css-property node "--hue-rgb" (str/join ", " hue-rgb))
-              (dom/set-css-property node "--saturation-grad-from" (format-hsl hsl-from))
-              (dom/set-css-property node "--saturation-grad-to" (format-hsl hsl-to)))))
+              (dom/set-css-property! node "--color" (str/join ", " rgb))
+              (dom/set-css-property! node "--hue-rgb" (str/join ", " hue-rgb))
+              (dom/set-css-property! node "--saturation-grad-from" (format-hsl hsl-from))
+              (dom/set-css-property! node "--saturation-grad-to" (format-hsl hsl-to)))))
 
     ;; When closing the modal we update the recent-color list
     (mf/use-effect
@@ -291,12 +290,18 @@
                      :on-select-stop handle-change-stop}]
 
       [:div.colorpicker-tabs
-       [:div.colorpicker-tab {:class (when (= @active-tab :ramp) "active")
-                              :on-click (change-tab :ramp)} i/picker-ramp]
-       [:div.colorpicker-tab {:class (when (= @active-tab :harmony) "active")
-                              :on-click (change-tab :harmony)} i/picker-harmony]
-       [:div.colorpicker-tab {:class (when (= @active-tab :hsva) "active")
-                              :on-click (change-tab :hsva)} i/picker-hsv]]
+       [:div.colorpicker-tab.tooltip.tooltip-bottom.tooltip-expand
+        {:class (when (= @active-tab :ramp) "active")
+         :alt (tr "workspace.libraries.colors.rgba")
+         :on-click (change-tab :ramp)} i/picker-ramp]
+       [:div.colorpicker-tab.tooltip.tooltip-bottom.tooltip-expand
+        {:class (when (= @active-tab :harmony) "active")
+         :alt (tr "workspace.libraries.colors.rgb-complementary")
+         :on-click (change-tab :harmony)} i/picker-harmony]
+       [:div.colorpicker-tab.tooltip.tooltip-bottom.tooltip-expand
+        {:class (when (= @active-tab :hsva) "active")
+         :alt (tr "workspace.libraries.colors.hsv")
+         :on-click (change-tab :hsva)} i/picker-hsv]]
 
       (if picking-color?
         [:div.picker-detail-wrapper
@@ -305,13 +310,19 @@
         (case @active-tab
           :ramp [:& ramp-selector {:color current-color
                                    :disable-opacity disable-opacity
-                                   :on-change handle-change-color}]
+                                   :on-change handle-change-color
+                                   :on-start-drag #(st/emit! (dwu/start-undo-transaction))
+                                   :on-finish-drag #(st/emit! (dwu/commit-undo-transaction))}]
           :harmony [:& harmony-selector {:color current-color
                                          :disable-opacity disable-opacity
-                                         :on-change handle-change-color}]
+                                         :on-change handle-change-color
+                                         :on-start-drag #(st/emit! (dwu/start-undo-transaction))
+                                         :on-finish-drag #(st/emit! (dwu/commit-undo-transaction))}]
           :hsva [:& hsva-selector {:color current-color
                                    :disable-opacity disable-opacity
-                                   :on-change handle-change-color}]
+                                   :on-change handle-change-color
+                                   :on-start-drag #(st/emit! (dwu/start-undo-transaction))
+                                   :on-finish-drag #(st/emit! (dwu/commit-undo-transaction))}]
           nil))
 
       [:& color-inputs {:type (if (= @active-tab :hsva) :hsv :rgb)
@@ -331,7 +342,7 @@
           {:on-click (fn []
                        (on-accept (state->data @state))
                        (modal/hide!))}
-          (t locale "workspace.libraries.colors.save-color")]])]]))
+          (tr "workspace.libraries.colors.save-color")]])]]))
 
 (defn calculate-position
   "Calculates the style properties for the given coordinates and position"
@@ -361,7 +372,7 @@
         position (or position :left)
         style (calculate-position vport position x y)
 
-        handle-change (fn [new-data _shift-clicked?]
+        handle-change (fn [new-data]
                         (reset! dirty? (not= data new-data))
                         (reset! last-change new-data)
                         (when on-change

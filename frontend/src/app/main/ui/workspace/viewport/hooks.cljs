@@ -6,7 +6,6 @@
 
 (ns app.main.ui.workspace.viewport.hooks
   (:require
-   [app.common.data :as d]
    [app.common.geom.shapes :as gsh]
    [app.common.pages :as cp]
    [app.main.data.shortcuts :as dsc]
@@ -84,50 +83,90 @@
   (let [on-resize (actions/on-resize viewport-ref)]
     (mf/use-layout-effect (mf/deps layout) on-resize)))
 
-(defn setup-keyboard [alt? ctrl?]
+(defn setup-keyboard [alt? ctrl? space?]
   (hooks/use-stream ms/keyboard-alt #(reset! alt? %))
-  (hooks/use-stream ms/keyboard-ctrl #(reset! ctrl? %)))
+  (hooks/use-stream ms/keyboard-ctrl #(reset! ctrl? %))
+  (hooks/use-stream ms/keyboard-space #(reset! space? %)))
 
-;; TODO: revisit the arguments, looks like `selected` is not necessary here
-(defn setup-hover-shapes [page-id move-stream _selected objects transform selected ctrl? hover hover-ids zoom]
-  (let [query-point
+(defn setup-hover-shapes [page-id move-stream objects transform selected ctrl? hover hover-ids hover-disabled? zoom]
+  (let [;; We use ref so we don't recreate the stream on a change
+        zoom-ref (mf/use-ref zoom)
+        ctrl-ref (mf/use-ref @ctrl?)
+        transform-ref (mf/use-ref nil)
+        selected-ref (mf/use-ref selected)
+        hover-disabled-ref (mf/use-ref hover-disabled?)
+
+        query-point
         (mf/use-callback
          (mf/deps page-id)
          (fn [point]
-           (let [rect (gsh/center->rect point (/ 5 zoom) (/ 5 zoom))]
-             (uw/ask-buffered!
-              {:cmd :selection/query
-               :page-id page-id
-               :rect rect
-               :include-frames? true
-               :reverse? true})))) ;; we want the topmost shape to be selected first
-
-        ;; We use ref so we don't recreate the stream on a change
-        transform-ref (mf/use-ref nil)
+           (let [zoom (mf/ref-val zoom-ref)
+                 ctrl? (mf/ref-val ctrl-ref)
+                 rect (gsh/center->rect point (/ 5 zoom) (/ 5 zoom))]
+             (if (mf/ref-val hover-disabled-ref)
+               (rx/of nil)
+               (uw/ask-buffered!
+                 {:cmd :selection/query
+                  :page-id page-id
+                  :rect rect
+                  :include-frames? true
+                  :clip-children? (not ctrl?)
+                  :reverse? true}))))) ;; we want the topmost shape to be selected first
 
         over-shapes-stream
-        (->> move-stream
-             ;; When transforming shapes we stop querying the worker
-             (rx/filter #(not (some? (mf/ref-val transform-ref))))
-             (rx/switch-map query-point))
-        ]
+        (mf/use-memo
+          (fn []
+            (rx/merge
+             (->> move-stream
+                  ;; When transforming shapes we stop querying the worker
+                  (rx/filter #(not (some? (mf/ref-val transform-ref))))
+                  (rx/merge-map query-point))
 
+             (->> move-stream
+                  ;; When transforming shapes we stop querying the worker
+                  (rx/filter #(some? (mf/ref-val transform-ref)))
+                  (rx/map (constantly nil))))))]
+
+    ;; Refresh the refs on a value change
     (mf/use-effect
      (mf/deps transform)
      #(mf/set-ref-val! transform-ref transform))
 
+    (mf/use-effect
+     (mf/deps zoom)
+     #(mf/set-ref-val! zoom-ref zoom))
+
+    (mf/use-effect
+     (mf/deps @ctrl?)
+     #(mf/set-ref-val! ctrl-ref @ctrl?))
+
+    (mf/use-effect
+     (mf/deps selected)
+     #(mf/set-ref-val! selected-ref selected))
+
+    (mf/use-effect
+     (mf/deps hover-disabled?)
+     #(mf/set-ref-val! hover-disabled-ref hover-disabled?))
+
     (hooks/use-stream
      over-shapes-stream
-     (mf/deps page-id objects selected @ctrl?)
+     (mf/deps page-id objects @ctrl?)
      (fn [ids]
-       (let [remove-id? (into #{} (mapcat #(cp/get-parents % objects)) selected)
-             remove-id? (if @ctrl?
-                          (d/concat remove-id?
-                                    (->> ids
-                                         (filterv #(= :group (get-in objects [% :type])))))
-                          remove-id?)
-             ids (->> ids (filterv (comp not remove-id?)))]
-         (reset! hover (get objects (first ids)))
+       (let [is-group?
+             (fn [id]
+               (contains? #{:group :bool} (get-in objects [id :type])))
+
+             selected (mf/ref-val selected-ref)
+
+             remove-xfm (mapcat #(cp/get-parents % objects))
+             remove-id? (cond-> (into #{} remove-xfm selected)
+                          @ctrl?
+                          (into (filter is-group?) ids))
+
+             ids         (filterv (comp not remove-id?) ids)
+             hover-shape (get objects (first ids))]
+
+         (reset! hover hover-shape)
          (reset! hover-ids ids))))))
 
 (defn setup-viewport-modifiers [modifiers selected objects render-ref]

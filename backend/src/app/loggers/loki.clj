@@ -7,12 +7,12 @@
 (ns app.loggers.loki
   "A Loki integration."
   (:require
+   [app.common.logging :as l]
    [app.common.spec :as us]
    [app.config :as cfg]
    [app.util.async :as aa]
    [app.util.http :as http]
    [app.util.json :as json]
-   [app.util.logging :as l]
    [app.worker :as wrk]
    [clojure.core.async :as a]
    [clojure.spec.alpha :as s]
@@ -30,7 +30,7 @@
 (defmethod ig/init-key ::reporter
   [_ {:keys [receiver uri] :as cfg}]
   (when uri
-    (l/info :msg "intializing loki reporter" :uri uri)
+    (l/info :msg "initializing loki reporter" :uri uri)
     (let [input (a/chan (a/dropping-buffer 512))]
       (receiver :sub input)
       (a/go-loop []

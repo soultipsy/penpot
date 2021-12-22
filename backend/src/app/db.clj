@@ -9,13 +9,13 @@
    [app.common.data :as d]
    [app.common.exceptions :as ex]
    [app.common.geom.point :as gpt]
+   [app.common.logging :as l]
    [app.common.spec :as us]
    [app.common.transit :as t]
    [app.common.uuid :as uuid]
    [app.db.sql :as sql]
    [app.metrics :as mtx]
    [app.util.json :as json]
-   [app.util.logging :as l]
    [app.util.migrations :as mg]
    [app.util.time :as dt]
    [clojure.java.io :as io]
@@ -27,14 +27,16 @@
    com.zaxxer.hikari.HikariConfig
    com.zaxxer.hikari.HikariDataSource
    com.zaxxer.hikari.metrics.prometheus.PrometheusMetricsTrackerFactory
+   java.io.InputStream
+   java.io.OutputStream
    java.lang.AutoCloseable
    java.sql.Connection
    java.sql.Savepoint
    org.postgresql.PGConnection
    org.postgresql.geometric.PGpoint
+   org.postgresql.jdbc.PgArray
    org.postgresql.largeobject.LargeObject
    org.postgresql.largeobject.LargeObjectManager
-   org.postgresql.jdbc.PgArray
    org.postgresql.util.PGInterval
    org.postgresql.util.PGobject))
 
@@ -46,28 +48,26 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (declare instrument-jdbc!)
+(declare apply-migrations!)
 
 (s/def ::name keyword?)
 (s/def ::uri ::us/not-empty-string)
 (s/def ::min-pool-size ::us/integer)
 (s/def ::max-pool-size ::us/integer)
 (s/def ::migrations map?)
+(s/def ::read-only ::us/boolean)
 
 (defmethod ig/pre-init-spec ::pool [_]
-  (s/keys :req-un [::uri ::name ::min-pool-size ::max-pool-size ::migrations ::mtx/metrics]))
+  (s/keys :req-un [::uri ::name ::min-pool-size ::max-pool-size]
+          :opt-un [::migrations ::mtx/metrics ::read-only]))
 
 (defmethod ig/init-key ::pool
-  [_ {:keys [migrations metrics] :as cfg}]
-  (l/info :action "initialize connection pool"
-          :name (d/name (:name cfg))
-          :uri (:uri cfg))
-  (instrument-jdbc! (:registry metrics))
+  [_ {:keys [migrations metrics name] :as cfg}]
+  (l/info :action "initialize connection pool" :name (d/name name) :uri (:uri cfg))
+  (some-> metrics :registry instrument-jdbc!)
+
   (let [pool (create-pool cfg)]
-    (when (seq migrations)
-      (with-open [conn ^AutoCloseable (open pool)]
-        (mg/setup! conn)
-        (doseq [[name steps] migrations]
-          (mg/migrate! conn {:name (d/name name) :steps steps}))))
+    (some->> (seq migrations) (apply-migrations! pool))
     pool))
 
 (defmethod ig/halt-key! ::pool
@@ -84,37 +84,50 @@
     :name "database_query_total"
     :help "An absolute counter of database queries."}))
 
+(defn- apply-migrations!
+  [pool migrations]
+  (with-open [conn ^AutoCloseable (open pool)]
+    (mg/setup! conn)
+    (doseq [[name steps] migrations]
+      (mg/migrate! conn {:name (d/name name) :steps steps}))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; API & Impl
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (def initsql
-  (str "SET statement_timeout = 120000;\n"
-       "SET idle_in_transaction_session_timeout = 120000;"))
+  (str "SET statement_timeout = 300000;\n"
+       "SET idle_in_transaction_session_timeout = 300000;"))
 
 (defn- create-datasource-config
-  [{:keys [metrics] :as cfg}]
+  [{:keys [metrics read-only] :or {read-only false} :as cfg}]
   (let [dburi    (:uri cfg)
         username (:username cfg)
         password (:password cfg)
-        config   (HikariConfig.)
-        mtf      (PrometheusMetricsTrackerFactory. (:registry metrics))]
+        config   (HikariConfig.)]
     (doto config
       (.setJdbcUrl (str "jdbc:" dburi))
       (.setPoolName (d/name (:name cfg)))
       (.setAutoCommit true)
-      (.setReadOnly false)
-      (.setConnectionTimeout 8000)  ;; 8seg
-      (.setValidationTimeout 8000)  ;; 8seg
-      (.setIdleTimeout 120000)      ;; 2min
-      (.setMaxLifetime 1800000)     ;; 30min
+      (.setReadOnly read-only)
+      (.setConnectionTimeout 10000)  ;; 10seg
+      (.setValidationTimeout 10000)  ;; 10seg
+      (.setIdleTimeout 120000)       ;; 2min
+      (.setMaxLifetime 1800000)      ;; 30min
       (.setMinimumIdle (:min-pool-size cfg 0))
-      (.setMaximumPoolSize (:max-pool-size cfg 30))
-      (.setMetricsTrackerFactory mtf)
+      (.setMaximumPoolSize (:max-pool-size cfg 50))
       (.setConnectionInitSql initsql)
       (.setInitializationFailTimeout -1))
+
+    ;; When metrics namespace is provided
+    (when metrics
+      (->> (:registry metrics)
+           (PrometheusMetricsTrackerFactory.)
+           (.setMetricsTrackerFactory config)))
+
     (when username (.setUsername config username))
     (when password (.setPassword config password))
+
     config))
 
 (defn pool?
@@ -127,7 +140,7 @@
   [pool]
   (.isClosed ^HikariDataSource pool))
 
-(defn- create-pool
+(defn create-pool
   [cfg]
   (let [dsc (create-datasource-config cfg)]
     (jdbc-dt/read-as-instant)
@@ -231,9 +244,9 @@
 (defn get-by-params
   ([ds table params]
    (get-by-params ds table params nil))
-  ([ds table params {:keys [uncheked] :or {uncheked false} :as opts}]
+  ([ds table params {:keys [check-not-found] :or {check-not-found true} :as opts}]
    (let [res (exec-one! ds (sql/select table params opts))]
-     (when (and (not uncheked) (or (not res) (is-deleted? res)))
+     (when (and check-not-found (or (not res) (is-deleted? res)))
        (ex/raise :type :not-found
                  :table table
                  :hint "database object not found"))
@@ -267,12 +280,27 @@
   (instance? PGpoint v))
 
 (defn pgarray?
-  [v]
-  (instance? PgArray v))
+  ([v] (instance? PgArray v))
+  ([v type]
+   (and (instance? PgArray v)
+        (= type (.getBaseTypeName ^PgArray v)))))
 
 (defn pgarray-of-uuid?
   [v]
   (and (pgarray? v) (= "uuid" (.getBaseTypeName ^PgArray v))))
+
+(defn decode-pgarray
+  ([v] (into [] (.getArray ^PgArray v)))
+  ([v in] (into in (.getArray ^PgArray v)))
+  ([v in xf] (into in xf (.getArray ^PgArray v))))
+
+(defn pgarray->set
+  [v]
+  (set (.getArray ^PgArray v)))
+
+(defn pgarray->vector
+  [v]
+  (vec (.getArray ^PgArray v)))
 
 (defn pgpoint
   [p]
@@ -284,7 +312,6 @@
     (if (coll? objects)
       (.createArrayOf conn ^String type (into-array Object objects))
       (.createArrayOf conn ^String type objects))))
-
 
 (defn decode-pgpoint
   [^PGpoint v]
@@ -368,15 +395,6 @@
   (doto (org.postgresql.util.PGobject.)
     (.setType "jsonb")
     (.setValue (json/encode-str data))))
-
-(defn pgarray->set
-  [v]
-  (set (.getArray ^PgArray v)))
-
-(defn pgarray->vector
-  [v]
-  (vec (.getArray ^PgArray v)))
-
 
 ;; --- Locks
 

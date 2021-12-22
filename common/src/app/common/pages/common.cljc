@@ -6,10 +6,11 @@
 
 (ns app.common.pages.common
   (:require
+   [app.common.colors :as clr]
    [app.common.uuid :as uuid]))
 
-(def file-version 11)
-(def default-color "#b1b2b5") ;; $color-gray-20
+(def file-version 12)
+(def default-color clr/gray-20)
 (def root uuid/zero)
 
 (def component-sync-attrs
@@ -37,6 +38,8 @@
    :stroke-style          :stroke-group
    :stroke-width          :stroke-group
    :stroke-alignment      :stroke-group
+   :stroke-cap-start      :stroke-group
+   :stroke-cap-end        :stroke-group
    :rx                    :radius-group
    :ry                    :radius-group
    :r1                    :radius-group

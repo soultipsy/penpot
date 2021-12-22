@@ -10,11 +10,13 @@
    [app.common.media :as cm]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
+   [app.config :as cf]
    [app.db :as db]
    [app.media :as media]
    [app.rpc.queries.teams :as teams]
    [app.storage :as sto]
    [app.util.http :as http]
+   [app.util.rlimit :as rlimit]
    [app.util.services :as sv]
    [app.util.time :as dt]
    [clojure.spec.alpha :as s]
@@ -32,7 +34,6 @@
 (s/def ::file-id ::us/uuid)
 (s/def ::team-id ::us/uuid)
 
-
 ;; --- Create File Media object (upload)
 
 (declare create-file-media-object)
@@ -48,6 +49,7 @@
           :opt-un [::id]))
 
 (sv/defmethod ::upload-file-media-object
+  {::rlimit/permits (cf/get :rlimit-image)}
   [{:keys [pool] :as cfg} {:keys [profile-id file-id] :as params}]
   (db/with-atomic [conn pool]
     (let [file (select-file conn file-id)]
@@ -90,22 +92,30 @@
                          :content-type mtype
                          :expired-at (dt/in-future {:minutes 30})}))))
 
+;; NOTE: we use the `on conflict do update` instead of `do nothing`
+;; because postgresql does not returns anything if no update is
+;; performed, the `do update` does the trick.
+
+(def sql:create-file-media-object
+  "insert into file_media_object (id, file_id, is_local, name, media_id, thumbnail_id, width, height, mtype)
+   values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       on conflict (id) do update set created_at=file_media_object.created_at
+       returning *")
 
 (defn create-file-media-object
   [{:keys [conn storage] :as cfg} {:keys [id file-id is-local name content] :as params}]
   (media/validate-media-type (:content-type content))
-  (let [storage      (assoc storage :conn conn)
+  (let [storage      (media/configure-assets-storage storage conn)
         source-path  (fs/path (:tempfile content))
         source-mtype (:content-type content)
-
-        source-info  (media/run cfg {:cmd :info :input {:path source-path :mtype source-mtype}})
+        source-info  (media/run {:cmd :info :input {:path source-path :mtype source-mtype}})
 
         thumb        (when (and (not (svg-image? source-info))
                                 (big-enough-for-thumbnail? source-info))
-                       (media/run cfg (assoc thumbnail-options
-                                             :cmd :generic-thumbnail
-                                             :input {:mtype (:mtype source-info)
-                                                     :path source-path})))
+                       (media/run (assoc thumbnail-options
+                                         :cmd :generic-thumbnail
+                                         :input {:mtype (:mtype source-info)
+                                                 :path source-path})))
 
         image        (if (= (:mtype source-info) "image/svg+xml")
                        (let [data (slurp source-path)]
@@ -117,17 +127,15 @@
         thumb        (when thumb
                        (sto/put-object storage {:content (sto/content (:data thumb) (:size thumb))
                                                 :content-type (:mtype thumb)}))]
-    (db/insert! conn :file-media-object
-                {:id (or id (uuid/next))
-                 :file-id file-id
-                 :is-local is-local
-                 :name name
-                 :media-id (:id image)
-                 :thumbnail-id (:id thumb)
-                 :width  (:width source-info)
-                 :height (:height source-info)
-                 :mtype  source-mtype})))
 
+    (db/exec-one! conn [sql:create-file-media-object
+                        (or id (uuid/next))
+                        file-id is-local name
+                        (:id image)
+                        (:id thumb)
+                        (:width source-info)
+                        (:height source-info)
+                        source-mtype])))
 
 ;; --- Create File Media Object (from URL)
 

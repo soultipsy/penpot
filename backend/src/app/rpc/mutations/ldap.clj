@@ -7,6 +7,7 @@
 (ns app.rpc.mutations.ldap
   (:require
    [app.common.exceptions :as ex]
+   [app.common.logging :as l]
    [app.common.spec :as us]
    [app.config :as cfg]
    [app.db :as db]
@@ -17,6 +18,14 @@
    [clj-ldap.client :as ldap]
    [clojure.spec.alpha :as s]
    [clojure.string]))
+
+
+(s/def ::fullname ::us/not-empty-string)
+(s/def ::email ::us/email)
+(s/def ::backend ::us/not-empty-string)
+
+(s/def ::info-data
+  (s/keys :req-un [::fullname ::email ::backend]))
 
 (defn ^java.lang.AutoCloseable connect
   []
@@ -57,6 +66,13 @@
         (ex/raise :type :validation
                   :code :wrong-credentials))
 
+      (when-not (s/valid? ::info-data info)
+        (let [explain (s/explain-str ::info-data info)]
+          (l/warn ::l/raw (str "invalid response from ldap, looks like ldap is not configured correctly\n" explain))
+          (ex/raise :type :restriction
+                    :code :wrong-ldap-response
+                    :reason explain)))
+
       (let [profile (login-or-register cfg {:email (:email info)
                                             :backend (:backend info)
                                             :fullname (:fullname info)})]
@@ -94,7 +110,9 @@
                  (cfg/get :ldap-attrs-fullname)]
 
         base-dn (cfg/get :ldap-base-dn)
-        params  {:filter query :sizelimit 1 :attributes attrs}]
+        params  {:filter query
+                 :sizelimit 1
+                 :attributes attrs}]
     (first (ldap/search cpool base-dn params))))
 
 (defn- authenticate

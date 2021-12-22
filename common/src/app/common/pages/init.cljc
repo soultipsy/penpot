@@ -6,6 +6,7 @@
 
 (ns app.common.pages.init
   (:require
+   [app.common.colors :as clr]
    [app.common.data :as d]
    [app.common.exceptions :as ex]
    [app.common.pages.common :refer [file-version default-color]]
@@ -15,7 +16,7 @@
 
 (def empty-page-data
   {:options {}
-   :name "Page"
+   :name "Page-1"
    :objects
    {root
     {:id root
@@ -32,19 +33,19 @@
 
 (def default-frame-attrs
   {:frame-id uuid/zero
-   :fill-color "#ffffff"
+   :fill-color clr/white
    :fill-opacity 1
    :shapes []})
 
 (def ^:private minimal-shapes
   [{:type :rect
-    :name "Rect"
+    :name "Rect-1"
     :fill-color default-color
     :fill-opacity 1
     :stroke-style :none
     :stroke-alignment :center
     :stroke-width 0
-    :stroke-color "#000000"
+    :stroke-color clr/black
     :stroke-opacity 0
     :rx 0
     :ry 0}
@@ -52,35 +53,35 @@
    {:type :image}
 
    {:type :circle
-    :name "Circle"
+    :name "Circle-1"
     :fill-color default-color
     :fill-opacity 1
     :stroke-style :none
     :stroke-alignment :center
     :stroke-width 0
-    :stroke-color "#000000"
+    :stroke-color clr/black
     :stroke-opacity 0}
 
    {:type :path
-    :name "Path"
+    :name "Path-1"
     :stroke-style :solid
     :stroke-alignment :center
     :stroke-width 2
-    :stroke-color "#000000"
+    :stroke-color clr/black
     :stroke-opacity 1}
 
    {:type :frame
-    :name "Artboard"
-    :fill-color "#ffffff"
+    :name "Artboard-1"
+    :fill-color clr/white
     :fill-opacity 1
     :stroke-style :none
     :stroke-alignment :center
     :stroke-width 0
-    :stroke-color "#000000"
+    :stroke-color clr/black
     :stroke-opacity 0}
 
    {:type :text
-    :name "Text"
+    :name "Text-1"
     :content nil}
 
    {:type :svg-raw}])

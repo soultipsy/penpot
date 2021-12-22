@@ -8,6 +8,7 @@
   (:require
    [app.common.data :as d]
    [app.main.data.dashboard :as dd]
+   [app.main.data.events :as ev]
    [app.main.data.messages :as dm]
    [app.main.data.modal :as modal]
    [app.main.repo :as rp]
@@ -18,6 +19,7 @@
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.router :as rt]
    [beicon.core :as rx]
+   [potok.core :as ptk]
    [rumext.alpha :as mf]))
 
 (defn get-project-name
@@ -72,10 +74,12 @@
 
         on-new-tab
         (fn [_]
-          (let [pparams {:project-id (:project-id file)
-                         :file-id (:id file)}
-                qparams {:page-id (first (get-in file [:data :pages]))}]
-            (st/emit! (rt/nav-new-window :workspace pparams qparams))))
+          (let [path-params  {:project-id (:project-id file)
+                              :file-id (:id file)}
+                query-params {:page-id (first (get-in file [:data :pages]))}]
+            (st/emit! (rt/nav-new-window* {:rname :workspace
+                                           :path-params path-params
+                                           :query-params query-params}))))
 
         on-duplicate
         (fn [_]
@@ -111,7 +115,7 @@
             (st/emit! (dm/success (tr "dashboard.success-move-file"))))
           (if (or navigate? (not= team-id current-team-id))
             (st/emit! (dd/go-to-files team-id project-id))
-            (st/emit! (dd/fetch-recent-files)
+            (st/emit! (dd/fetch-recent-files team-id)
                       (dd/clear-selected-files))))
 
         on-move
@@ -159,6 +163,8 @@
         (mf/use-callback
          (mf/deps files current-team-id)
          (fn [_]
+           (st/emit! (ptk/event ::ev/event {::ev/name "export-files"
+                                            :num-files (count files)}))
            (->> (rx/from files)
                 (rx/flat-map
                  (fn [file]
@@ -172,13 +178,19 @@
                      {:type :export
                       :team-id current-team-id
                       :has-libraries? (->> files (some :has-libraries?))
-                      :files files})))))))]
+                      :files files})))))))
+
+        ;; NOTE: this is used for detect if component is still mounted
+        mounted-ref (mf/use-ref true)]
 
     (mf/use-effect
+     (mf/deps show?)
      (fn []
-       (->> (rp/query! :all-projects)
-            (rx/map group-by-team)
-            (rx/subs #(reset! teams %)))))
+       (when show?
+         (->> (rp/query! :all-projects)
+              (rx/map group-by-team)
+              (rx/subs #(when (mf/ref-val mounted-ref)
+                          (reset! teams %)))))))
 
     (when current-team
       (let [sub-options (conj (vec (for [project current-projects]

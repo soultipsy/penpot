@@ -8,11 +8,12 @@
   (:require
    [app.common.data :as d]
    [app.common.exceptions :as ex]
+   [app.common.logging :as l]
    [app.common.spec :as us]
+   [app.http.doc :as doc]
    [app.http.errors :as errors]
    [app.http.middleware :as middleware]
    [app.metrics :as mtx]
-   [app.util.logging :as l]
    [clojure.spec.alpha :as s]
    [integrant.core :as ig]
    [reitit.ring :as rr]
@@ -114,9 +115,14 @@
 (s/def ::storage map?)
 (s/def ::assets map?)
 (s/def ::feedback fn?)
+(s/def ::error-report-handler fn?)
+(s/def ::audit-http-handler fn?)
 
 (defmethod ig/pre-init-spec ::router [_]
-  (s/keys :req-un [::rpc ::session ::mtx/metrics ::oauth ::storage ::assets ::feedback]))
+  (s/keys :req-un [::rpc ::session ::mtx/metrics
+                   ::oauth ::storage ::assets ::feedback
+                   ::error-report-handler
+                   ::audit-http-handler]))
 
 (defmethod ig/init-key ::router
   [_ {:keys [session rpc oauth metrics assets feedback] :as cfg}]
@@ -136,20 +142,25 @@
     ["/webhooks"
      ["/sns" {:post (:sns-webhook cfg)}]]
 
-    ["/api" {:middleware [[middleware/etag]
-                          [middleware/format-response-body]
+    ["/api" {:middleware [[middleware/cors]
+                          [middleware/etag]
                           [middleware/params]
                           [middleware/multipart-params]
                           [middleware/keyword-params]
+                          [middleware/format-response-body]
                           [middleware/parse-request-body]
                           [middleware/errors errors/handle]
                           [middleware/cookies]]}
 
+     ["/_doc" {:get (doc/handler rpc)}]
+
      ["/feedback" {:middleware [(:middleware session)]
                    :post feedback}]
-
      ["/auth/oauth/:provider" {:post (:handler oauth)}]
      ["/auth/oauth/:provider/callback" {:get (:callback-handler oauth)}]
+
+     ["/audit/events" {:middleware [(:middleware session)]
+                       :post (:audit-http-handler cfg)}]
 
      ["/rpc" {:middleware [(:middleware session)]}
       ["/query/:type" {:get (:query-handler rpc)

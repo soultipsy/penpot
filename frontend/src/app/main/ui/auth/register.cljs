@@ -116,7 +116,7 @@
    [:h1 (tr "auth.register-title")]
    [:div.subtitle (tr "auth.register-subtitle")]
 
-   (when cf/demo-warning
+   (when (contains? @cf/flags :demo-warning)
      [:& demo-warning])
 
    [:& register-form {:params params}]
@@ -135,7 +135,7 @@
           :tab-index "4"}
       (tr "auth.login-here")]]
 
-    (when cf/allow-demo-users
+    (when (contains? @cf/flags :demo-users)
       [:div.link-entry
        [:span (tr "auth.create-demo-profile") " "]
        [:a {:on-click #(st/emit! (du/create-demo-profile))
@@ -169,7 +169,9 @@
     (let [token (:invitation-token data)]
       (st/emit! (rt/nav :auth-verify-token {} {:token token})))
 
-    (not= "penpot" (:auth-backend data))
+    ;; The :is-active flag is true, when insecure-register is enabled
+    ;; or the user used external auth provider.
+    (:is-active data)
     (st/emit! (du/login-from-register))
 
     :else
@@ -178,18 +180,19 @@
 (s/def ::accept-terms-and-privacy (s/and ::us/boolean true?))
 (s/def ::accept-newsletter-subscription ::us/boolean)
 
-(s/def ::register-validate-form
-  (s/keys :req-un [::token ::fullname ::accept-terms-and-privacy]
-          :opt-un [::accept-newsletter-subscription]))
+(if (contains? @cf/flags :terms-and-privacy-checkbox)
+  (s/def ::register-validate-form
+    (s/keys :req-un [::token ::fullname ::accept-terms-and-privacy]
+            :opt-un [::accept-newsletter-subscription]))
+  (s/def ::register-validate-form
+    (s/keys :req-un [::token ::fullname]
+            :opt-un [::accept-terms-and-privacy
+                     ::accept-newsletter-subscription])))
 
 (mf/defc register-validate-form
   [{:keys [params] :as props}]
-  (let [initial (mf/use-memo
-                 (mf/deps params)
-                 (fn []
-                   (assoc params :accept-newsletter-subscription false)))
-        form    (fm/use-form :spec ::register-validate-form
-                             :initial initial)
+  (let [form       (fm/use-form :spec ::register-validate-form
+                                :initial params)
         submitted? (mf/use-state false)
 
         on-submit
@@ -210,18 +213,18 @@
                     :tab-index "1"
                     :label (tr "auth.fullname")
                     :type "text"}]]
-     [:div.fields-row
-      [:& fm/input {:name :accept-terms-and-privacy
-                    :class "check-primary"
-                    :label (tr "auth.terms-privacy-agreement")
-                    :type "checkbox"}]]
 
-     (when (contains? @cf/flags :show-newsletter-check-on-register-validation)
+     (when (contains? @cf/flags :terms-and-privacy-checkbox)
        [:div.fields-row
-        [:& fm/input {:name :accept-newsletter-subscription
+        [:& fm/input {:name :accept-terms-and-privacy
                       :class "check-primary"
-                      :label (tr "auth.newsletter-subscription")
-                      :type "checkbox"}]])
+                      :type "checkbox"}
+         [:span
+          (tr "auth.terms-privacy-agreement")
+          [:div
+           [:a {:href "https://penpot.app/terms.html" :target "_blank"} (tr "auth.terms-of-service")]
+           [:span ",\u00A0"]
+           [:a {:href "https://penpot.app/privacy.html" :target "_blank"} (tr "auth.privacy-policy")]]]]])
 
      [:& fm/submit-button
       {:label (tr "auth.register-submit")

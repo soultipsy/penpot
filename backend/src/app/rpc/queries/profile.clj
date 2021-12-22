@@ -37,10 +37,15 @@
 
 (sv/defmethod ::profile {:auth false}
   [{:keys [pool] :as cfg} {:keys [profile-id] :as params}]
-  (if profile-id
-    (retrieve-profile pool profile-id)
-    {:id uuid/zero
-     :fullname "Anonymous User"}))
+
+  ;; We need to return the anonymous profile object in two cases, when
+  ;; no profile-id is in session, and when db call raises not found. In all other
+  ;; cases we need to reraise the exception.
+  (or (ex/try*
+       #(some->> profile-id (retrieve-profile pool))
+       #(when (not= :not-found (:type (ex-data %))) (throw %)))
+      {:id uuid/zero
+       :fullname "Anonymous User"}))
 
 (def ^:private sql:default-profile-team
   "select t.id, name
@@ -70,6 +75,10 @@
   [conn profile]
   (merge profile (retrieve-additional-data conn (:id profile))))
 
+(defn- filter-profile-props
+  [props]
+  (into {} (filter (fn [[k _]] (simple-ident? k))) props))
+
 (defn decode-profile-row
   [{:keys [props] :as row}]
   (cond-> row
@@ -83,24 +92,25 @@
 
 (defn retrieve-profile
   [conn id]
-  (let [profile (some->> (retrieve-profile-data conn id)
-                         (strip-private-attrs)
-                         (populate-additional-data conn))]
-    (when (nil? profile)
-      (ex/raise :type :not-found
-                :hint "Object doest not exists."))
+  (let [profile (->> (retrieve-profile-data conn id)
+                     (strip-private-attrs)
+                     (populate-additional-data conn))]
+    (update profile :props filter-profile-props)))
 
-    profile))
+(def ^:private sql:profile-by-email
+  "select p.* from profile as p
+    where p.email = ?
+      and (p.deleted_at is null or
+           p.deleted_at > now())")
 
 (defn retrieve-profile-data-by-email
   [conn email]
-  (try
-    (db/get-by-params conn :profile {:email (str/lower email)})
-    (catch Exception _e)))
+  (ex/ignoring
+   (db/exec-one! conn [sql:profile-by-email (str/lower email)])))
 
 ;; --- Attrs Helpers
 
 (defn strip-private-attrs
-  "Only selects a publicy visible profile attrs."
+  "Only selects a publicly visible profile attrs."
   [row]
   (dissoc row :password :deleted-at))

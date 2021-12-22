@@ -6,13 +6,13 @@
 
 (ns app.tasks.file-media-gc
   "A maintenance task that is responsible to purge the unused media
-  objects from files. A file is ellegible to be garbage collected
+  objects from files. A file is eligible to be garbage collected
   after some period of inactivity (the default threshold is 72h)."
   (:require
+   [app.common.logging :as l]
    [app.common.pages.migrations :as pmg]
    [app.db :as db]
    [app.util.blob :as blob]
-   [app.util.logging :as l]
    [app.util.time :as dt]
    [clojure.spec.alpha :as s]
    [integrant.core :as ig]))
@@ -107,7 +107,7 @@
                :thumbnail-id (:thumbnail-id mobj))
 
       ;; NOTE: deleting the file-media-object in the database
-      ;; automatically marks as toched the referenced storage
+      ;; automatically marks as touched the referenced storage
       ;; objects. The touch mechanism is needed because many files can
       ;; point to the same storage objects and we can't just delete
       ;; them.

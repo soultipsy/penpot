@@ -59,7 +59,8 @@
     ptk/WatchEvent
     (watch [_ state stream]
       (let [wsession (get-in state [:ws file-id])
-            stoper   (rx/filter #(= ::finalize %) stream)
+            stoper   (->> stream
+                          (rx/filter (ptk/type? ::finalize)))
             interval (* 1000 60)]
         (->> (rx/merge
               ;; Each 60 seconds send a keepalive message for maintain
@@ -106,7 +107,7 @@
 
 (defn- handle-pointer-send
   [file-id point]
-  (ptk/reify ::handle-pointer-update
+  (ptk/reify ::handle-pointer-send
     ptk/EffectEvent
     (effect [_ state _]
       (let [ws (get-in state [:ws file-id])
@@ -122,11 +123,10 @@
 (defn finalize
   [file-id]
   (ptk/reify ::finalize
-    ptk/WatchEvent
-    (watch [_ state _]
+    ptk/EffectEvent
+    (effect [_ state _]
       (when-let [ws (get-in state [:ws file-id])]
-        (ws/-close ws))
-      (rx/of ::finalize))))
+        (ws/-close ws)))))
 
 ;; --- Handle: Presence
 
@@ -152,14 +152,14 @@
                               (remove nil?))
                   used  (into #{} xfm presence)
                   avail (set/difference presence-palette used)]
-              (or (first avail) "#000000")))
+              (or (first avail) "var(--color-black)")))
 
           (update-color [color presence]
             (if (some? color)
               color
               (get-next-color presence)))
 
-          (update-sesion [session presence]
+          (update-session [session presence]
             (-> session
                 (assoc :id session-id)
                 (assoc :profile-id profile-id)
@@ -168,7 +168,7 @@
 
           (update-presence [presence]
             (-> presence
-                (update session-id update-sesion presence)
+                (update session-id update-session presence)
                 (d/without-nils)))
 
           ]

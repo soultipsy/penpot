@@ -97,7 +97,7 @@ msgid "auth.notifications.invalid-token-error"
 msgstr "Codul de recuperare nu este valid."
 
 #: src/app/main/ui/auth/recovery.cljs
-msgid "auth.notifications.password-changed-succesfully"
+msgid "auth.notifications.password-changed-successfully"
 msgstr "Parola a fost schimbată cu success"
 
 #: src/app/main/ui/auth/recovery_request.cljs
@@ -221,7 +221,8 @@ msgstr ""
 "Ar trebui să urcați doar fonturi la care aveți drept de folosință sau "
 "fonturi personale. Află mai multe despre Dreptul de conținut la secțiunea "
 "[Termenii și Condițiile Penpot](https://penpot.app/terms.html). De "
-"asemenea, vă recomandăm să citiți și despre [licențierea fonturilor](2)."
+"asemenea, vă recomandăm să citiți și despre [licențierea "
+"fonturilor](https://www.typography.com/faq)."
 
 #: src/app/main/ui/dashboard/team.cljs
 msgid "dashboard.invite-profile"
@@ -1060,6 +1061,10 @@ msgstr "Serviciul nu este disponibil"
 msgid "labels.settings"
 msgstr "Setări"
 
+#: src/app/main/ui/viewer/header.cljs, src/app/main/ui/viewer/header.cljs, src/app/main/ui/viewer/header.cljs
+msgid "labels.share-prototype"
+msgstr "Distribuie link"
+
 #: src/app/main/ui/dashboard/sidebar.cljs
 msgid "labels.shared-libraries"
 msgstr "Colecții distribuite"
@@ -1273,7 +1278,7 @@ msgid "modals.leave-and-reassign.promote-and-leave"
 msgstr "Promovează şi părăseşte echipa"
 
 #: src/app/main/ui/dashboard/sidebar.cljs
-msgid "modals.leave-and-reassign.select-memeber-to-promote"
+msgid "modals.leave-and-reassign.select-member-to-promote"
 msgstr "Selectează un membru pentru promovare"
 
 #: src/app/main/ui/dashboard/sidebar.cljs
@@ -1464,10 +1469,6 @@ msgstr "Elimină link"
 msgid "viewer.header.share.subtitle"
 msgstr "Prin acest link se permite accesul public"
 
-#: src/app/main/ui/viewer/header.cljs, src/app/main/ui/viewer/header.cljs, src/app/main/ui/viewer/header.cljs
-msgid "viewer.header.share.title"
-msgstr "Distribuie link"
-
 #: src/app/main/ui/viewer/header.cljs
 msgid "viewer.header.show-interactions"
 msgstr "Afişează interacţiunile"
@@ -1482,35 +1483,35 @@ msgstr "Harta site-ului"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.hcenter"
-msgstr "Aliniază orizontal"
+msgstr "Aliniază orizontal (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.hdistribute"
-msgstr "Introdu spaţierea orizontală"
+msgstr "Introdu spaţierea orizontală (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.hleft"
-msgstr "Aliniază la stânga"
+msgstr "Aliniază la stânga (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.hright"
-msgstr "Aliniază la dreapta"
+msgstr "Aliniază la dreapta (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.vbottom"
-msgstr "Aliniază jos"
+msgstr "Aliniază jos (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.vcenter"
-msgstr "Aliniază vertical"
+msgstr "Aliniază vertical (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.vdistribute"
-msgstr "Introdu spaţierea pe verticală"
+msgstr "Introdu spaţierea pe verticală (%s)"
 
 #: src/app/main/ui/workspace/sidebar/align.cljs
 msgid "workspace.align.vtop"
-msgstr "Aliniază sus"
+msgstr "Aliniază sus (%s)"
 
 #: src/app/main/ui/workspace/sidebar/assets.cljs
 msgid "workspace.assets.assets"
@@ -2047,14 +2048,6 @@ msgstr "Grupează layere"
 #: src/app/main/ui/workspace/sidebar/options/menus/layer.cljs
 msgid "workspace.options.layer-options.title.multiple"
 msgstr "Layere selectate"
-
-#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
-msgid "workspace.options.navigate-to"
-msgstr "Navighează la"
-
-#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
-msgid "workspace.options.none"
-msgstr "Nici unul"
 
 #: src/app/main/ui/workspace/sidebar/options/shapes/frame.cljs, src/app/main/ui/workspace/sidebar/options/menus/measures.cljs
 msgid "workspace.options.position"

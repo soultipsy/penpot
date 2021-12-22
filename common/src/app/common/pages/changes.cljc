@@ -9,11 +9,26 @@
    [app.common.data :as d]
    [app.common.exceptions :as ex]
    [app.common.geom.shapes :as gsh]
+   [app.common.geom.shapes.bool :as gshb]
    [app.common.pages.common :refer [component-sync-attrs]]
    [app.common.pages.helpers :as cph]
    [app.common.pages.init :as init]
    [app.common.pages.spec :as spec]
    [app.common.spec :as us]))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Specific helpers
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn- without-obj
+  "Clear collection from specified obj and without nil values."
+  [coll o]
+  (into [] (filter #(not= % o)) coll))
+
+(defn vec-without-nils
+  [coll]
+  (into [] (remove nil?) coll))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Page Transformation Changes
@@ -25,7 +40,9 @@
 (defmulti process-operation (fn [_ op] (:type op)))
 
 (defn process-changes
-  ([data items] (process-changes data items true))
+  ([data items]
+   (process-changes data items true))
+
   ([data items verify?]
    ;; When verify? false we spec the schema validation. Currently used to make just
    ;; 1 validation even if the changes are applied twice
@@ -54,45 +71,50 @@
                           (assoc data :options (d/dissoc-in (:options data) path)))))))
 
 (defmethod process-change :add-obj
-  [data {:keys [id obj page-id component-id frame-id parent-id
-                index ignore-touched]}]
-  (letfn [(update-fn [data]
-            (let [parent-id (or parent-id frame-id)
-                  objects   (:objects data)
-                  obj (assoc obj
-                             :frame-id frame-id
-                             :parent-id parent-id
-                             :id id)]
-              (if (and (or (nil? parent-id) (contains? objects parent-id))
-                       (or (nil? frame-id) (contains? objects frame-id)))
-                (-> data
-                    (update :objects assoc id obj)
-                    (update-in [:objects parent-id :shapes]
-                               (fn [shapes]
-                                 (let [shapes (or shapes [])]
-                                   (cond
-                                     (some #{id} shapes)
-                                     shapes
+  [data {:keys [id obj page-id component-id frame-id parent-id index ignore-touched]}]
+  (letfn [(update-parent-shapes [shapes]
+            ;; Ensure that shapes is always a vector.
+            (let [shapes (into [] shapes)]
+              (cond
+                (some #{id} shapes)
+                shapes
 
-                                     (nil? index)
-                                     (if (= :frame (:type obj))
-                                       (d/concat [id] shapes)
-                                       (conj shapes id))
+                (nil? index)
+                (if (= :frame (:type obj))
+                  (into [id] shapes)
+                  (conj shapes id))
 
-                                     :else
-                                     (cph/insert-at-index shapes index [id])))))
+                :else
+                (cph/insert-at-index shapes index [id]))))
 
-                    (cond-> (and (:shape-ref (get-in data [:objects parent-id]))
-                                 (not= parent-id frame-id)
-                                 (not ignore-touched))
-                      (->
-                        (update-in [:objects parent-id :touched]
-                                   cph/set-touched-group :shapes-group)
-                        (d/dissoc-in [:objects parent-id :remote-synced?]))))
-                data)))]
+          (update-parent [parent]
+            (-> parent
+                (update :shapes update-parent-shapes)
+                (update :shapes vec-without-nils)
+                (cond-> (and (:shape-ref parent)
+                             (not= (:id parent) frame-id)
+                             (not ignore-touched))
+                  (-> (update :touched cph/set-touched-group :shapes-group)
+                      (dissoc :remote-synced?)))))
+
+          (update-objects [objects parent-id]
+            (if (and (or (nil? parent-id) (contains? objects parent-id))
+                     (or (nil? frame-id) (contains? objects frame-id)))
+              (-> objects
+                  (assoc id (-> obj
+                                (assoc :frame-id frame-id)
+                                (assoc :parent-id parent-id)
+                                (assoc :id id)))
+                  (update parent-id update-parent))
+              objects))
+
+          (update-container [data]
+            (let [parent-id (or parent-id frame-id)]
+              (update data :objects update-objects parent-id)))]
+
     (if page-id
-      (d/update-in-when data [:pages-index page-id] update-fn)
-      (d/update-in-when data [:components component-id] update-fn))))
+      (d/update-in-when data [:pages-index page-id] update-container)
+      (d/update-in-when data [:components component-id] update-container))))
 
 (defmethod process-change :mod-obj
   [data {:keys [id page-id component-id operations]}]
@@ -107,42 +129,38 @@
 
 (defmethod process-change :del-obj
   [data {:keys [page-id component-id id ignore-touched]}]
-  (letfn [(delete-object [objects id]
+  (letfn [(delete-from-parent [parent]
+            (let [parent (update parent :shapes without-obj id)]
+              (cond-> parent
+                (and (:shape-ref parent)
+                     (not ignore-touched))
+                (-> (update :touched cph/set-touched-group :shapes-group)
+                    (dissoc :remote-synced?)))))
+
+          (delete-from-objects [objects]
             (if-let [target (get objects id)]
-              (let [parent-id (cph/get-parent id objects)
-                    frame-id  (:frame-id target)
-                    parent    (get objects parent-id)
-                    objects   (dissoc objects id)]
-                (cond-> objects
-                  (and (not= parent-id frame-id)
-                       (#{:group :svg-raw} (:type parent)))
-                  (update-in [parent-id :shapes] (fn [s] (filterv #(not= % id) s)))
-
-                  (and (:shape-ref parent) (not ignore-touched))
-                  (->
-                    (update-in [parent-id :touched] cph/set-touched-group :shapes-group)
-                    (d/dissoc-in [parent-id :remote-synced?]))
-
-                  (contains? objects frame-id)
-                  (update-in [frame-id :shapes] (fn [s] (filterv #(not= % id) s)))
-
-                  (seq (:shapes target))   ; Recursive delete all
-                                           ; dependend objects
-                  (as-> $ (reduce delete-object $ (:shapes target)))))
+              (let [parent-id (or (:parent-id target)
+                                  (:frame-id target))
+                    children  (cph/get-children id objects)]
+                (-> (reduce dissoc objects children)
+                    (dissoc id)
+                    (d/update-when parent-id delete-from-parent)))
               objects))]
+
     (if page-id
-      (d/update-in-when data [:pages-index page-id :objects] delete-object id)
-      (d/update-in-when data [:components component-id :objects] delete-object id))))
+      (d/update-in-when data [:pages-index page-id :objects] delete-from-objects)
+      (d/update-in-when data [:components component-id :objects] delete-from-objects))))
 
 ;; reg-objects operation "regenerates" the geometry and selrect of the parent groups
 (defmethod process-change :reg-objects
   [data {:keys [page-id component-id shapes]}]
+  ;; FIXME: Improve performance
   (letfn [(reg-objects [objects]
             (reduce #(d/update-when %1 %2 update-group %1) objects
                     (sequence (comp
                                (mapcat #(cons % (cph/get-parents % objects)))
                                (map #(get objects %))
-                               (filter #(= (:type %) :group))
+                               (filter #(contains? #{:group :bool} (:type %)))
                                (map :id)
                                (distinct))
                               shapes)))
@@ -162,6 +180,9 @@
                 ;; If the group is empty we don't make any changes. Should be removed by a later process
                 (empty? children)
                 group
+
+                (= :bool (:type group))
+                (gshb/update-bool-selrect group children objects)
 
                 (:masked-group? group)
                 (set-mask-selrect group children)
@@ -191,25 +212,24 @@
               (insert-items prev-shapes index shapes)
               ;; For masked groups, the first shape is the mask
               ;; and it cannot be moved.
-              (let [mask-id (first prev-shapes)
-                    other-ids (rest prev-shapes)
-                    not-mask-shapes (strip-id shapes mask-id)
-                    new-index (if (nil? index) nil (max (dec index) 0))
-                    new-shapes (insert-items other-ids new-index not-mask-shapes)]
-                (d/concat [mask-id] new-shapes))))
-
-          (strip-id [coll id]
-            (filterv #(not= % id) coll))
+              (let [mask-id         (first prev-shapes)
+                    other-ids       (rest prev-shapes)
+                    not-mask-shapes (without-obj shapes mask-id)
+                    new-index       (if (nil? index) nil (max (dec index) 0))
+                    new-shapes      (insert-items other-ids new-index not-mask-shapes)]
+                (into [mask-id] new-shapes))))
 
           (add-to-parent [parent index shapes]
-            (cond-> parent
-              true
-              (update :shapes check-insert-items parent index shapes)
-
-              (and (:shape-ref parent) (= (:type parent) :group) (not ignore-touched))
-              (->
-                (update :touched cph/set-touched-group :shapes-group)
-                (dissoc :remote-synced?))))
+            (let [parent (-> parent
+                             (update :shapes check-insert-items parent index shapes)
+                             ;; We need to ensure that no `nil` in the
+                             ;; shapes list after adding all the
+                             ;; incoming shapes to the parent.
+                             (update :shapes vec-without-nils))]
+              (cond-> parent
+                (and (:shape-ref parent) (= (:type parent) :group) (not ignore-touched))
+                (-> (update :touched cph/set-touched-group :shapes-group)
+                    (dissoc :remote-synced?)))))
 
           (remove-from-old-parent [cpindex objects shape-id]
             (let [prev-parent-id (get cpindex shape-id)]
@@ -217,22 +237,19 @@
               ;; the new destination target parent id.
               (if (= prev-parent-id parent-id)
                 objects
-                (let [sid shape-id
-                      pid prev-parent-id
-                      obj (get objects pid)
+                (let [sid        shape-id
+                      pid        prev-parent-id
+                      obj        (get objects pid)
                       component? (and (:shape-ref obj)
                                       (= (:type obj) :group)
                                       (not ignore-touched))]
 
                   (-> objects
-                      (d/update-in-when [pid :shapes] strip-id sid)
-
-                      (cond-> component?
-                        (d/update-when
-                         pid
-                         #(-> %
-                              (update :touched cph/set-touched-group :shapes-group)
-                              (dissoc :remote-synced?)))))))))
+                      (d/update-in-when [pid :shapes] without-obj sid)
+                      (d/update-in-when [pid :shapes] vec-without-nils)
+                      (cond-> component? (d/update-when pid #(-> %
+                                                                 (update :touched cph/set-touched-group :shapes-group)
+                                                                 (dissoc :remote-synced?)))))))))
 
           (update-parent-id [objects id]
             (-> objects
@@ -240,8 +257,7 @@
 
           ;; Updates the frame-id references that might be outdated
           (assign-frame-id [frame-id objects id]
-            (let [objects (-> objects
-                              (d/update-when id assoc :frame-id frame-id))
+            (let [objects (d/update-when objects id assoc :frame-id frame-id)
                   obj     (get objects id)]
               (cond-> objects
                 ;; If we moving frame, the parent frame is the root
@@ -278,7 +294,7 @@
                   (reduce update-parent-id $ shapes)
 
                   ;; Analyze the old parents and clear the old links
-                  ;; only if the new parrent is different form old
+                  ;; only if the new parent is different form old
                   ;; parent.
                   (reduce (partial remove-from-old-parent cpindex) $ shapes)
 
@@ -456,4 +472,3 @@
   (ex/raise :type :not-implemented
             :code :operation-not-implemented
             :context {:type (:type op)}))
-

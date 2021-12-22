@@ -9,10 +9,10 @@
    [app.common.pages.migrations :as pmg]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
-   [app.config :as cf]
    [app.db :as db]
    [app.rpc.permissions :as perms]
    [app.rpc.queries.projects :as projects]
+   [app.rpc.queries.share-link :refer [retrieve-share-link]]
    [app.rpc.queries.teams :as teams]
    [app.storage.impl :as simpl]
    [app.util.blob :as blob]
@@ -60,19 +60,51 @@
     where f.id = ?
       and ppr.profile_id = ?")
 
-(defn- retrieve-file-permissions
+(defn retrieve-file-permissions
   [conn profile-id file-id]
-  (db/exec! conn [sql:file-permissions
-                  file-id profile-id
-                  file-id profile-id
-                  file-id profile-id]))
+  (when (and profile-id file-id)
+    (db/exec! conn [sql:file-permissions
+                    file-id profile-id
+                    file-id profile-id
+                    file-id profile-id])))
+
+(defn get-permissions
+  ([conn profile-id file-id]
+   (let [rows     (retrieve-file-permissions conn profile-id file-id)
+         is-owner (boolean (some :is-owner rows))
+         is-admin (boolean (some :is-admin rows))
+         can-edit (boolean (some :can-edit rows))]
+     (when (seq rows)
+       {:type :membership
+        :is-owner is-owner
+        :is-admin (or is-owner is-admin)
+        :can-edit (or is-owner is-admin can-edit)
+        :can-read true})))
+  ([conn profile-id file-id share-id]
+   (let [perms  (get-permissions conn profile-id file-id)
+         ldata  (retrieve-share-link conn file-id share-id)]
+
+     ;; NOTE: in a future when share-link becomes more powerful and
+     ;; will allow us specify which parts of the app is available, we
+     ;; will probably need to tweak this function in order to expose
+     ;; this flags to the frontend.
+     (cond
+       (some? perms) perms
+       (some? ldata) {:type :share-link
+                      :can-read true
+                      :flags (:flags ldata)}))))
+
+(def has-edit-permissions?
+  (perms/make-edition-predicate-fn get-permissions))
+
+(def has-read-permissions?
+  (perms/make-read-predicate-fn get-permissions))
 
 (def check-edition-permissions!
-  (perms/make-edition-check-fn retrieve-file-permissions))
+  (perms/make-check-fn has-edit-permissions?))
 
 (def check-read-permissions!
-  (perms/make-read-check-fn retrieve-file-permissions))
-
+  (perms/make-check-fn has-read-permissions?))
 
 ;; --- Query: Files search
 
@@ -125,29 +157,6 @@
                     profile-id team-id
                     search-term])))
 
-
-;; --- Query: Files
-
-;; DEPRECATED: should be removed probably on 1.6.x
-
-(def ^:private sql:files
-  "select f.*
-     from file as f
-    where f.project_id = ?
-      and f.deleted_at is null
-    order by f.modified_at desc")
-
-(s/def ::project-id ::us/uuid)
-(s/def ::files
-  (s/keys :req-un [::profile-id ::project-id]))
-
-(sv/defmethod ::files
-  [{:keys [pool] :as cfg} {:keys [profile-id project-id] :as params}]
-  (with-open [conn (db/open pool)]
-    (projects/check-read-permissions! conn profile-id project-id)
-    (into [] decode-row-xf (db/exec! conn [sql:files project-id]))))
-
-
 ;; --- Query: Project Files
 
 (def ^:private sql:project-files
@@ -175,7 +184,7 @@
 
 (defn- retrieve-data*
   [{:keys [storage] :as cfg} file]
-  (when-let [backend (simpl/resolve-backend storage (cf/get :fdata-storage-backend))]
+  (when-let [backend (simpl/resolve-backend storage (:data-backend file))]
     (simpl/get-object-bytes backend file)))
 
 (defn retrieve-data
@@ -195,11 +204,15 @@
   (s/keys :req-un [::profile-id ::id]))
 
 (sv/defmethod ::file
+  "Retrieve a file by its ID. Only authenticated users."
   [{:keys [pool] :as cfg} {:keys [profile-id id] :as params}]
   (db/with-atomic [conn pool]
-    (let [cfg (assoc cfg :conn conn)]
-      (check-edition-permissions! conn profile-id id)
-      (retrieve-file cfg id))))
+    (let [cfg   (assoc cfg :conn conn)
+          perms (get-permissions conn profile-id id)]
+
+      (check-read-permissions! perms)
+      (some-> (retrieve-file cfg id)
+              (assoc :permissions perms)))))
 
 (s/def ::page
   (s/keys :req-un [::profile-id ::file-id]))
@@ -214,7 +227,7 @@
                 (= frame-id uuid/zero)
                 (not (some? (get-in objects [frame-id :thumbnail]))))))
 
-        ;; We need to remove from the attribute :shapes its childrens because
+        ;; We need to remove from the attribute :shapes its children because
         ;; they will not be sent in the data
         remove-frame-children
         (fn [[id shape]]
@@ -234,35 +247,14 @@
 (sv/defmethod ::page
   [{:keys [pool] :as cfg} {:keys [profile-id file-id strip-thumbnails]}]
   (db/with-atomic [conn pool]
-    (check-edition-permissions! conn profile-id file-id)
+    (check-read-permissions! conn profile-id file-id)
+
     (let [cfg     (assoc cfg :conn conn)
           file    (retrieve-file cfg file-id)
           page-id (get-in file [:data :pages 0])]
       (cond-> (get-in file [:data :pages-index page-id])
         strip-thumbnails
         (remove-thumbnails-frames)))))
-
-;; --- Query: Shared Library Files
-
-;; DEPRECATED: and will be removed on 1.6.x
-
-(def ^:private sql:shared-files
-  "select f.*
-     from file as f
-    inner join project as p on (p.id = f.project_id)
-    where f.is_shared = true
-      and f.deleted_at is null
-      and p.deleted_at is null
-      and p.team_id = ?
-    order by f.modified_at desc")
-
-(s/def ::shared-files
-  (s/keys :req-un [::profile-id ::team-id]))
-
-(sv/defmethod ::shared-files
-  [{:keys [pool] :as cfg} {:keys [team-id] :as params}]
-  (into [] decode-row-xf (db/exec! pool [sql:shared-files team-id])))
-
 
 ;; --- Query: Shared Library Files
 
@@ -330,7 +322,7 @@
   [{:keys [pool] :as cfg} {:keys [profile-id file-id] :as params}]
   (db/with-atomic [conn pool]
     (let [cfg (assoc cfg :conn conn)]
-      (check-edition-permissions! conn profile-id file-id)
+      (check-read-permissions! conn profile-id file-id)
       (retrieve-file-libraries cfg false file-id))))
 
 ;; --- QUERY: team-recent-files

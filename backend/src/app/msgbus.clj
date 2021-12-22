@@ -8,10 +8,10 @@
   "The msgbus abstraction implemented using redis as underlying backend."
   (:require
    [app.common.exceptions :as ex]
+   [app.common.logging :as l]
    [app.common.spec :as us]
    [app.config :as cfg]
    [app.util.blob :as blob]
-   [app.util.logging :as l]
    [app.util.time :as dt]
    [clojure.core.async :as a]
    [clojure.spec.alpha :as s]
@@ -179,18 +179,18 @@
     ;; Add a unique listener to connection
     (.addListener sub-conn
                   (reify RedisPubSubListener
-                    (message [it pattern topic message])
-                    (message [it topic message]
-                      ;; There are no back pressure, so we use a slidding
+                    (message [_it _pattern _topic _message])
+                    (message [_it topic message]
+                      ;; There are no back pressure, so we use a sliding
                       ;; buffer for cases when the pubsub broker sends
                       ;; more messages that we can process.
                       (let [val {:topic topic :message (blob/decode message)}]
                         (when-not (a/offer! rcv-ch val)
                           (l/warn :msg "dropping message on subscription loop"))))
-                    (psubscribed [it pattern count])
-                    (punsubscribed [it pattern count])
-                    (subscribed [it topic count])
-                    (unsubscribed [it topic count])))
+                    (psubscribed [_it _pattern _count])
+                    (punsubscribed [_it _pattern _count])
+                    (subscribed [_it _topic _count])
+                    (unsubscribed [_it _topic _count])))
 
     (letfn [(subscribe-to-single-topic [nsubs topic chan]
               (let [nsubs (if (nil? nsubs) #{chan} (conj nsubs chan))]
@@ -243,7 +243,7 @@
             (recur))
           (a/close! rcv-ch)))
 
-      ;; Asyncrhonous message processing loop;x
+      ;; Asynchronous message processing loop;x
       (a/go-loop []
         (if-let [{:keys [topic message]} (a/<! rcv-ch)]
           ;; This means we receive data from redis and we need to

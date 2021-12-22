@@ -53,21 +53,6 @@
           (t/is (= (:id data) (:id result)))
           (t/is (= (:name data) (:name result))))))
 
-    (t/testing "query files (deprecated)"
-      (let [data {::th/type :files
-                  :project-id proj-id
-                  :profile-id (:id prof)}
-            out  (th/query! data)]
-
-        ;; (th/print-result! out)
-        (t/is (nil? (:error out)))
-
-        (let [result (:result out)]
-          (t/is (= 1 (count result)))
-          (t/is (= file-id (get-in result [0 :id])))
-          (t/is (= "new name" (get-in result [0 :name])))
-          (t/is (= 1 (count (get-in result [0 :data :pages])))))))
-
     (t/testing "query files"
       (let [data {::th/type :project-files
                   :project-id proj-id
@@ -120,7 +105,7 @@
           (t/is (= (:type error-data) :not-found)))))
 
     (t/testing "query list files after delete"
-      (let [data {::th/type :files
+      (let [data {::th/type :project-files
                   :project-id proj-id
                   :profile-id (:id prof)}
             out  (th/query! data)]
@@ -189,12 +174,12 @@
                             :type :image
                             :metadata {:id (:id fmo1)}}}]})]
 
-      ;; run the task inmediatelly
+      ;; run the task immediately
       (let [task  (:app.tasks.file-media-gc/handler th/*system*)
             res   (task {})]
         (t/is (= 0 (:processed res))))
 
-      ;; make the file ellegible for GC waiting 300ms (configured
+      ;; make the file eligible for GC waiting 300ms (configured
       ;; timeout for testing)
       (th/sleep 300)
 

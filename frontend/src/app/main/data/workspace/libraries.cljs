@@ -9,6 +9,7 @@
    [app.common.data :as d]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as geom]
+   [app.common.logging :as log]
    [app.common.pages :as cp]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
@@ -18,10 +19,10 @@
    [app.main.data.workspace.groups :as dwg]
    [app.main.data.workspace.libraries-helpers :as dwlh]
    [app.main.data.workspace.state-helpers :as wsh]
+   [app.main.data.workspace.undo :as dwu]
    [app.main.repo :as rp]
    [app.main.store :as st]
    [app.util.i18n :refer [tr]]
-   [app.util.logging :as log]
    [app.util.router :as rt]
    [app.util.time :as dt]
    [beicon.core :as rx]
@@ -83,12 +84,15 @@
 
 (defn add-color
   [color]
-  (let [id   (uuid/next)
-        color (assoc color
-                     :id id
-                     :name (default-color-name color))]
+  (let [id    (uuid/next)
+        color (-> color
+                  (assoc :id id)
+                  (assoc :name (default-color-name color)))]
     (us/assert ::cp/color color)
     (ptk/reify ::add-color
+      IDeref
+      (-deref [_] color)
+
       ptk/WatchEvent
       (watch [it _ _]
         (let [rchg {:type :add-color
@@ -131,10 +135,12 @@
                   :color color}
             uchg {:type :mod-color
                   :color prev}]
-        (rx/of (dch/commit-changes {:redo-changes [rchg]
+        (rx/of (dwu/start-undo-transaction)
+               (dch/commit-changes {:redo-changes [rchg]
                                     :undo-changes [uchg]
                                     :origin it})
-               (sync-file (:current-file-id state) file-id))))))
+               (sync-file (:current-file-id state) file-id)
+               (dwu/commit-undo-transaction))))))
 
 (defn delete-color
   [{:keys [id] :as params}]
@@ -211,6 +217,9 @@
    (let [typography (update typography :id #(or % (uuid/next)))]
      (us/assert ::cp/typography typography)
      (ptk/reify ::add-typography
+       IDeref
+       (-deref [_] typography)
+
        ptk/WatchEvent
        (watch [it _ _]
          (let [rchg {:type :add-typography
@@ -233,15 +242,17 @@
     (watch [it state _]
       (let [[path name] (cp/parse-path-name (:name typography))
             typography  (assoc typography :path path :name name)
-            prev (get-in state [:workspace-data :typographies (:id typography)])
-            rchg {:type :mod-typography
-                  :typography typography}
-            uchg {:type :mod-typography
-                  :typography prev}]
-        (rx/of (dch/commit-changes {:redo-changes [rchg]
+            prev        (get-in state [:workspace-data :typographies (:id typography)])
+            rchg        {:type :mod-typography
+                         :typography typography}
+            uchg        {:type :mod-typography
+                         :typography prev}]
+        (rx/of (dwu/start-undo-transaction)
+               (dch/commit-changes {:redo-changes [rchg]
                                     :undo-changes [uchg]
                                     :origin it})
-               (sync-file (:current-file-id state) file-id))))))
+               (sync-file (:current-file-id state) file-id)
+               (dwu/commit-undo-transaction))))))
 
 (defn delete-typography
   [id]
@@ -258,17 +269,20 @@
                                     :undo-changes [uchg]
                                     :origin it}))))))
 
-(def add-component
-  "Add a new component to current file library, from the currently selected shapes."
-  (ptk/reify ::add-component
+
+(defn- add-component2
+  "This is the second step of the component creation."
+  [selected]
+  (ptk/reify ::add-component2
+    IDeref
+    (-deref [_] {:num-shapes (count selected)})
+
     ptk/WatchEvent
     (watch [it state _]
       (let [file-id  (:current-file-id state)
             page-id  (:current-page-id state)
             objects  (wsh/lookup-page-objects state page-id)
-            selected (wsh/lookup-selected state)
-            selected (cp/clean-loops objects selected)
-            shapes (dwg/shapes-for-grouping objects selected)]
+            shapes   (dwg/shapes-for-grouping objects selected)]
         (when-not (empty? shapes)
           (let [[group rchanges uchanges]
                 (dwlh/generate-add-component shapes objects page-id file-id)]
@@ -277,6 +291,20 @@
                                           :undo-changes uchanges
                                           :origin it})
                      (dwc/select-shapes (d/ordered-set (:id group)))))))))))
+
+(defn add-component
+  "Add a new component to current file library, from the currently selected shapes.
+  This operation is made in two steps, first one for calculate the
+  shapes that will be part of the component and the second one with
+  the component creation."
+  []
+  (ptk/reify ::add-component
+    ptk/WatchEvent
+    (watch [_ state _]
+      (let [objects  (wsh/lookup-page-objects state)
+            selected (->> (wsh/lookup-selected state)
+                          (cp/clean-loops objects))]
+        (rx/of (add-component2 selected))))))
 
 (defn rename-component
   "Rename the component with the given id, in the current file library."
@@ -462,18 +490,45 @@
                                     :undo-changes uchanges
                                     :origin it}))))))
 
+(def detach-selected-components
+  (ptk/reify ::detach-selected-components
+    ptk/WatchEvent
+    (watch [it state _]
+      (let [page-id  (:current-page-id state)
+            objects  (wsh/lookup-page-objects state page-id)
+            local-library (dwlh/get-local-file state)
+            container (cp/get-container page-id :page local-library)
+
+            selected (->> state
+                          (wsh/lookup-selected)
+                          (cp/clean-loops objects))
+
+            [rchanges uchanges]
+            (reduce (fn [changes id]
+                      (dwlh/concat-changes
+                        changes
+                        (dwlh/generate-detach-instance id container)))
+                    dwlh/empty-changes
+                    selected)]
+
+        (rx/of (dch/commit-changes {:redo-changes rchanges
+                                    :undo-changes uchanges
+                                    :origin it}))))))
+
 (defn nav-to-component-file
   [file-id]
   (us/assert ::us/uuid file-id)
   (ptk/reify ::nav-to-component-file
     ptk/WatchEvent
     (watch [_ state _]
-      (let [file    (get-in state [:workspace-libraries file-id])
-            pparams {:project-id (:project-id file)
-                     :file-id (:id file)}
-            qparams {:page-id (first (get-in file [:data :pages]))
-                     :layout :assets}]
-        (rx/of (rt/nav-new-window :workspace pparams qparams))))))
+      (let [file         (get-in state [:workspace-libraries file-id])
+            path-params  {:project-id (:project-id file)
+                          :file-id (:id file)}
+            query-params {:page-id (first (get-in file [:data :pages]))
+                          :layout :assets}]
+        (rx/of (rt/nav-new-window* {:rname :workspace
+                                    :path-params path-params
+                                    :query-params query-params}))))))
 
 (defn ext-library-changed
   [file-id modified-at revn changes]
@@ -594,7 +649,7 @@
     ptk/UpdateEvent
     (update [_ state]
       (if (not= library-id (:current-file-id state))
-        (assoc-in state [:workspace-libraries library-id :synced-at] (dt/now))
+        (d/assoc-in-when state [:workspace-libraries library-id :synced-at] (dt/now))
         state))
 
     ptk/WatchEvent
@@ -611,14 +666,14 @@
                              (dwlh/generate-sync-file file-id :typographies library-id state)]
 
             xf-fcat  (comp (remove nil?) (map first) (mapcat identity))
-            rchanges (d/concat []
-                               (sequence xf-fcat library-changes)
-                               (sequence xf-fcat file-changes))
+            rchanges (d/concat-vec
+                      (sequence xf-fcat library-changes)
+                      (sequence xf-fcat file-changes))
 
             xf-scat  (comp (remove nil?) (map second) (mapcat identity))
-            uchanges (d/concat []
-                               (sequence xf-scat library-changes)
-                               (sequence xf-scat file-changes))]
+            uchanges (d/concat-vec
+                      (sequence xf-scat library-changes)
+                      (sequence xf-scat file-changes))]
 
         (log/debug :msg "SYNC-FILE finished" :js/rchanges (log-changes
                                                             rchanges
@@ -635,7 +690,7 @@
             ;; update to finish, before marking this file as synced.
             ;; TODO: look for a more precise way of syncing this.
             ;; Maybe by using the stream (second argument passed to watch)
-            ;; to wait for the corresponding changes-commited and then proced
+            ;; to wait for the corresponding changes-committed and then proceed
             ;; with the :update-sync mutation.
             (rx/concat (rx/timer 3000)
                        (rp/mutation :update-sync
@@ -665,8 +720,8 @@
       (let [file                  (dwlh/get-file state file-id)
             [rchanges1 uchanges1] (dwlh/generate-sync-file file-id :components library-id state)
             [rchanges2 uchanges2] (dwlh/generate-sync-library file-id :components library-id state)
-            rchanges (d/concat rchanges1 rchanges2)
-            uchanges (d/concat uchanges1 uchanges2)]
+            rchanges              (d/concat-vec rchanges1 rchanges2)
+            uchanges              (d/concat-vec uchanges1 uchanges2)]
         (when rchanges
           (log/debug :msg "SYNC-FILE (2nd stage) finished" :js/rchanges (log-changes
                                                                           rchanges

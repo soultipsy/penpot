@@ -9,6 +9,7 @@
   (:require
    [app.common.data :as d]
    [app.common.exceptions :as ex]
+   [app.common.logging :as l]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
    [app.db :as db]
@@ -16,7 +17,6 @@
    [app.storage.fs :as sfs]
    [app.storage.impl :as impl]
    [app.storage.s3 :as ss3]
-   [app.util.logging :as l]
    [app.util.time :as dt]
    [app.worker :as wrk]
    [clojure.spec.alpha :as s]
@@ -27,8 +27,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Storage Module State
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(s/def ::backend ::us/keyword)
 
 (s/def ::s3 ::ss3/backend)
 (s/def ::fs ::sfs/backend)
@@ -42,7 +40,7 @@
                    :db ::sdb/backend))))
 
 (defmethod ig/pre-init-spec ::storage [_]
-  (s/keys :req-un [::backend ::wrk/executor ::db/pool ::backends]))
+  (s/keys :req-un [::wrk/executor ::db/pool ::backends]))
 
 (defmethod ig/prep-key ::storage
   [_ {:keys [backends] :as cfg}]
@@ -55,7 +53,7 @@
       (assoc :backends (d/without-nils backends))))
 
 (s/def ::storage
-  (s/keys :req-un [::backends ::wrk/executor ::db/pool ::backend]))
+  (s/keys :req-un [::backends ::wrk/executor ::db/pool]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Database Objects
@@ -190,7 +188,7 @@
     object))
 
 (defn clone-object
-  "Creates a clone of the provided object using backend basded efficient
+  "Creates a clone of the provided object using backend based efficient
   method. Always clones objects to the configured default."
   [{:keys [pool conn] :as storage} object]
   (us/assert ::storage storage)
@@ -325,18 +323,18 @@
    returning *;")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Garbage Collection: Analize touched objects
+;; Garbage Collection: Analyze touched objects
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; This task is part of the garbage collection of storage objects and
-;; is responsible on analizing the touched objects and mark them for deletion
+;; is responsible on analyzing the touched objects and mark them for deletion
 ;; if corresponds.
 ;;
 ;; When file_media_object is deleted, the depending storage_object are
 ;; marked as touched. This means that some files that depend on a
 ;; concrete storage_object are no longer exists and maybe this
-;; storage_object is no longer necessary and can be ellegible for
-;; elimination. This task peridically analizes touched objects and
+;; storage_object is no longer necessary and can be eligible for
+;; elimination. This task periodically analyzes touched objects and
 ;; mark them as freeze (means that has other references and the object
 ;; is still valid) or deleted (no more references to this object so is
 ;; ready to be deleted).
@@ -410,7 +408,7 @@
 ;; For this situations we need to write a "log" of inserted files that
 ;; are checked in some time in future. If physical file exists but the
 ;; database refence does not exists means that leaked file is found
-;; and is inmediatelly deleted. The responsability of this task is
+;; and is immediately deleted. The responsibility of this task is
 ;; check that write log for possible leaked files.
 
 (def recheck-min-age (dt/duration {:hours 1}))

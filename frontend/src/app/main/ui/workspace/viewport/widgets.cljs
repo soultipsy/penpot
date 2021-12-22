@@ -10,10 +10,12 @@
    [app.common.geom.shapes :as gsh]
    [app.common.pages :as cp]
    [app.main.data.workspace :as dw]
+   [app.main.data.workspace.interactions :as dwi]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.streams :as ms]
    [app.main.ui.hooks :as hooks]
+   [app.main.ui.icons :as i]
    [app.main.ui.workspace.viewport.path-actions :refer [path-actions]]
    [app.util.dom :as dom]
    [rumext.alpha :as mf]))
@@ -29,7 +31,7 @@
                :pattern-units "userSpaceOnUse"}
      [:path {:d "M 1 0 L 0 0 0 1"
              :style {:fill "none"
-                     :stroke "#59B9E2"
+                     :stroke "var(--color-info)"
                      :stroke-opacity "0.2"
                      :stroke-width (str (/ 1 zoom))}}]]]
    [:rect {:x (:x vbox)
@@ -88,17 +90,20 @@
      "translate(" (* zoom x) ", " (* zoom y) ")")))
 
 (mf/defc frame-title
+  {::mf/wrap [mf/memo]}
   [{:keys [frame modifiers selected? zoom on-frame-enter on-frame-leave on-frame-select]}]
   (let [{:keys [width x y]} (gsh/transform-shape frame)
-        label-pos  (gpt/point x (- y (/ 10 zoom)))
+        label-pos (gpt/point x (- y (/ 10 zoom)))
 
         on-mouse-down
         (mf/use-callback
          (mf/deps (:id frame) on-frame-select)
-         (fn [event]
-           (dom/prevent-default event)
-           (dom/stop-propagation event)
-           (on-frame-select event (:id frame))))
+         (fn [bevent]
+           (let [event  (.-nativeEvent bevent)]
+             (when (= 1 (.-which event))
+               (dom/prevent-default event)
+               (dom/stop-propagation event)
+               (on-frame-select event (:id frame))))))
 
         on-double-click
         (mf/use-callback
@@ -126,7 +131,7 @@
             :transform (str (when (and selected? modifiers)
                               (str (:displacement modifiers) " " ))
                             (text-transform label-pos zoom))
-            :style {:fill (when selected? "#28c295")}
+            :style {:fill (when selected? "var(--color-primary-dark)")}
             :on-mouse-down on-mouse-down
             :on-double-click on-double-click
             :on-pointer-enter on-pointer-enter
@@ -154,3 +159,75 @@
                         :on-frame-enter on-frame-enter
                         :on-frame-leave on-frame-leave
                         :on-frame-select on-frame-select}])]))
+
+(mf/defc frame-flow
+  [{:keys [flow frame modifiers selected? zoom on-frame-enter on-frame-leave on-frame-select]}]
+  (let [{:keys [x y]} (gsh/transform-shape frame)
+        flow-pos (gpt/point x (- y (/ 35 zoom)))
+
+        on-mouse-down
+        (mf/use-callback
+         (mf/deps (:id frame) on-frame-select)
+         (fn [bevent]
+           (let [event  (.-nativeEvent bevent)]
+             (when (= 1 (.-which event))
+               (dom/prevent-default event)
+               (dom/stop-propagation event)
+               (on-frame-select event (:id frame))))))
+
+        on-double-click
+        (mf/use-callback
+          (mf/deps (:id frame))
+          (st/emitf (dwi/start-rename-flow (:id flow))))
+
+        on-pointer-enter
+        (mf/use-callback
+         (mf/deps (:id frame) on-frame-enter)
+         (fn [_]
+           (on-frame-enter (:id frame))))
+
+        on-pointer-leave
+        (mf/use-callback
+         (mf/deps (:id frame) on-frame-leave)
+         (fn [_]
+           (on-frame-leave (:id frame))))]
+
+    [:foreignObject {:x 0
+                     :y -15
+                     :width 100000
+                     :height 24
+                     :transform (str (when (and selected? modifiers)
+                                       (str (:displacement modifiers) " " ))
+                                     (text-transform flow-pos zoom))}
+     [:div.flow-badge {:class (dom/classnames :selected selected?)}
+      [:div.content {:on-mouse-down on-mouse-down
+                     :on-double-click on-double-click
+                     :on-pointer-enter on-pointer-enter
+                     :on-pointer-leave on-pointer-leave}
+       i/play
+       [:span (:name flow)]]]]))
+
+(mf/defc frame-flows
+  {::mf/wrap-props false}
+  [props]
+  (let [flows     (unchecked-get props "flows")
+        objects   (unchecked-get props "objects")
+        zoom      (unchecked-get props "zoom")
+        modifiers (unchecked-get props "modifiers")
+        selected  (or (unchecked-get props "selected") #{})
+
+        on-frame-enter  (unchecked-get props "on-frame-enter")
+        on-frame-leave  (unchecked-get props "on-frame-leave")
+        on-frame-select (unchecked-get props "on-frame-select")]
+    [:g.frame-flows
+     (for [flow flows]
+       (let [frame (get objects (:starting-frame flow))]
+         [:& frame-flow {:flow flow
+                         :frame frame
+                         :selected? (contains? selected (:id frame))
+                         :zoom zoom
+                         :modifiers modifiers
+                         :on-frame-enter on-frame-enter
+                         :on-frame-leave on-frame-leave
+                         :on-frame-select on-frame-select}]))]))
+

@@ -11,8 +11,8 @@
    [app.common.exceptions :as ex]
    [app.common.media :as cm]
    [app.common.spec :as us]
-   [app.rlimits :as rlm]
-   [app.rpc.queries.svg :as svg]
+   [app.config :as cf]
+   [app.util.svg :as svg]
    [buddy.core.bytes :as bb]
    [buddy.core.codecs :as bc]
    [clojure.java.io :as io]
@@ -27,10 +27,6 @@
    org.im4java.core.ConvertCmd
    org.im4java.core.IMOperation
    org.im4java.core.Info))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; --- Utility functions
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (s/def ::image-content-type cm/valid-image-types)
 (s/def ::font-content-type cm/valid-font-types)
@@ -54,7 +50,6 @@
                :code :media-type-not-allowed
                :hint "Seems like you are uploading an invalid media object"))))
 
-
 (defmulti process :cmd)
 (defmulti process-error class)
 
@@ -69,17 +64,11 @@
   (throw error))
 
 (defn run
-  [{:keys [rlimits] :as cfg} {:keys [rlimit] :or {rlimit :image} :as params}]
-  (us/assert map? rlimits)
-  (let [rlimit (get rlimits rlimit)]
-    (when-not rlimit
-      (ex/raise :type :internal
-                :code :rlimit-not-configured
-                :hint ":image rlimit not configured"))
-    (try
-      (rlm/execute rlimit (process params))
-      (catch Throwable e
-        (process-error e)))))
+  [params]
+  (try
+    (process params)
+    (catch Throwable e
+      (process-error e))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; --- Thumbnails Generation
@@ -183,7 +172,7 @@
   (us/assert ::input input)
   (let [{:keys [path mtype]} input]
     (if (= mtype "image/svg+xml")
-      (let [info (some-> path slurp svg/parse get-basic-info-from-svg)]
+      (let [info (some-> path slurp svg/pre-process svg/parse get-basic-info-from-svg)]
         (when-not info
           (ex/raise :type :validation
                     :code :invalid-svg-file
@@ -213,10 +202,8 @@
             :cause error))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; --- Fonts Generation
+;; Fonts Generation
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(def all-fotmats #{"font/woff2", "font/woff", "font/otf", "font/ttf"})
 
 (defmethod process :generate-fonts
   [{:keys [input] :as params}]
@@ -330,3 +317,17 @@
               (= stype :ttf)
               (-> (assoc "font/otf" (ttf->otf sfnt))
                   (assoc "font/ttf" sfnt)))))))))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Utility functions
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn configure-assets-storage
+  "Given storage map, returns a storage configured with the appropriate
+  backend for assets."
+  [storage conn]
+  (-> storage
+      (assoc :conn conn)
+      (assoc :backend (cf/get :assets-storage-backend :assets-fs))))
+

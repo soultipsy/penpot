@@ -12,7 +12,7 @@
    [rumext.alpha :as mf]))
 
 (def context (mf/create-context false))
-      
+
 (defn use-data-uris [urls]
   (let [embed? (mf/use-ctx context)
         urls (hooks/use-equal-memo urls)
@@ -38,6 +38,6 @@
          #(when sub
             (rx/dispose! sub)))))
 
-    ;; Use ref so if the urls are cached will return inmediately instead of the
+    ;; Use ref so if the urls are cached will return immediately instead of the
     ;; next render
     (mf/ref-val uri-data)))

@@ -74,7 +74,8 @@
 
 (defn filter-fonts
   [{:keys [term backends]} fonts]
-  (let [xform (cond-> (map identity)
+  (let [term (str/lower term)
+        xform (cond-> (map identity)
                 (seq term)
                 (comp (filter #(str/includes? (str/lower (:name %)) term)))
 
@@ -175,7 +176,7 @@
     [:div.font-selector
      [:div.font-selector-dropdown
       [:header
-       [:input {:placeholder "Search font"
+       [:input {:placeholder (tr "workspace.options.search-font")
                 :value (:term @state)
                 :ref input
                 :spell-check false
@@ -322,6 +323,8 @@
           :options size-options
           :type "number"
           :placeholder "--"
+          :min 3
+          :max 1000
           :on-change on-font-size-change
           :on-blur on-blur}])
 
@@ -391,7 +394,7 @@
      [:span.tooltip.tooltip-bottom
       {:alt (tr "workspace.options.text-options.none")
        :class (dom/classnames :current (= "none" text-transform))
-       :focus #(dom/prevent-default %)
+       :on-focus #(dom/prevent-default %)
        :on-click #(handle-change % "none")}
       i/minus]
      [:span.tooltip.tooltip-bottom
@@ -430,10 +433,12 @@
 ;; In summary, this need to a good UX/UI/IMPL rework.
 
 (mf/defc typography-entry
-  [{:keys [typography read-only? selected? on-click on-change on-detach on-context-menu editting? focus-name? file]}]
-  (let [open?          (mf/use-state editting?)
+  [{:keys [typography read-only? selected? on-click on-change on-detach on-context-menu editing? focus-name? file]}]
+  (let [open?          (mf/use-state editing?)
         hover-detach   (mf/use-state false)
         name-input-ref (mf/use-ref)
+
+        name-ref (mf/use-ref (:name typography))
 
         on-name-blur
         (fn [event]
@@ -445,13 +450,18 @@
         (fn []
           (let [pparams {:project-id (:project-id file)
                          :file-id (:id file)}]
-            (st/emit! (rt/nav :workspace pparams))))]
+            (st/emit! (rt/nav :workspace pparams))))
+
+        on-name-change
+        (mf/use-callback
+         (fn [event]
+           (mf/set-ref-val! name-ref (dom/get-target-val event))))]
 
     (mf/use-effect
-     (mf/deps editting?)
+     (mf/deps editing?)
      (fn []
-       (when editting?
-         (reset! open? editting?))))
+       (when editing?
+         (reset! open? editing?))))
 
     (mf/use-effect
      (mf/deps focus-name?)
@@ -461,6 +471,14 @@
           #(when-let [node (mf/ref-val name-input-ref)]
              (dom/focus! node)
              (dom/select-text! node))))))
+
+    (mf/use-effect
+     (fn []
+       (fn []
+         (let [content (mf/ref-val name-ref)]
+           ;; On destroy we check if it changed
+           (when (and (some? content) (not= content (:name typography)))
+             (on-change {:name content}))))))
 
     [:*
      [:div.element-set-options-group.typography-entry
@@ -534,7 +552,8 @@
             {:type "text"
              :ref name-input-ref
              :default-value (cp/merge-path-item (:path typography) (:name typography))
-             :on-blur on-name-blur}]
+             :on-blur on-name-blur
+             :on-change on-name-change}]
 
              [:div.element-set-actions-button
               {:on-click #(reset! open? false)}

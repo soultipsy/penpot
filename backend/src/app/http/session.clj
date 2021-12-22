@@ -8,11 +8,11 @@
   (:require
    [app.common.data :as d]
    [app.common.exceptions :as ex]
+   [app.common.logging :as l]
    [app.config :as cfg]
    [app.db :as db]
    [app.metrics :as mtx]
    [app.util.async :as aa]
-   [app.util.logging :as l]
    [app.util.time :as dt]
    [app.worker :as wrk]
    [clojure.core.async :as a]
@@ -53,7 +53,15 @@
 
 (defn- add-cookies
   [response {:keys [id] :as session}]
-  (assoc response :cookies {cookie-name {:path "/" :http-only true :value id}}))
+  (let [cors?   (contains? cfg/flags :cors)
+        secure? (contains? cfg/flags :secure-session-cookies)]
+    (assoc response :cookies {cookie-name {:path "/"
+                                           :http-only true
+                                           :value id
+                                           :same-site (cond (not secure?) :lax
+                                                            cors?         :none
+                                                            :else         :strict)
+                                           :secure secure?}})))
 
 (defn- clear-cookies
   [response]
@@ -66,7 +74,10 @@
       (do
         (a/>!! (::events-ch cfg) id)
         (l/update-thread-context! {:profile-id profile-id})
-        (handler (assoc request :profile-id profile-id)))
+        (-> request
+            (assoc :profile-id profile-id)
+            (assoc :session-id id)
+            (handler)))
       (handler request))))
 
 ;; --- STATE INIT: SESSION

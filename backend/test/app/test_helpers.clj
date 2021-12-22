@@ -7,6 +7,7 @@
 (ns app.test-helpers
   (:require
    [app.common.data :as d]
+   [app.common.flags :as flags]
    [app.common.pages :as cp]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
@@ -56,6 +57,7 @@
                            :app.http/server
                            :app.http/router
                            :app.notifications/handler
+                           :app.loggers.sentry/reporter
                            :app.http.oauth/google
                            :app.http.oauth/gitlab
                            :app.http.oauth/github
@@ -125,7 +127,8 @@
                         :password "123123"
                         :is-demo false}
                        params)]
-     (->> (#'profile/create-profile conn params)
+     (->> params
+          (#'profile/create-profile conn)
           (#'profile/create-profile-relations conn)))))
 
 (defn create-project*
@@ -158,15 +161,10 @@
   ([i params] (create-team* *pool* i params))
   ([conn i {:keys [profile-id] :as params}]
    (us/assert uuid? profile-id)
-   (let [id   (mk-uuid "team" i)
-         team (#'teams/create-team conn {:id id
-                                         :profile-id profile-id
-                                         :name (str "team" i)})]
-     (#'teams/create-team-role conn
-                               {:team-id id
-                                :profile-id profile-id
-                                :role :owner})
-     team)))
+   (let [id   (mk-uuid "team" i)]
+     (teams/create-team conn {:id id
+                              :profile-id profile-id
+                              :name (str "team" i)}))))
 
 (defn create-file-media-object*
   ([params] (create-file-media-object* *pool* params))
@@ -228,9 +226,12 @@
   ([params] (update-file* *pool* params))
   ([conn {:keys [file-id changes session-id profile-id revn]
           :or {session-id (uuid/next) revn 0}}]
-   (let [file   (db/get-by-id conn :file file-id)
-         msgbus (:app.msgbus/msgbus *system*)]
-     (#'files/update-file {:conn conn :msgbus msgbus}
+   (let [file    (db/get-by-id conn :file file-id)
+         msgbus  (:app.msgbus/msgbus *system*)
+         metrics (:app.metrics/metrics *system*)]
+     (#'files/update-file {:conn conn
+                           :msgbus msgbus
+                           :metrics metrics}
                           {:file file
                            :revn revn
                            :changes changes
@@ -333,10 +334,24 @@
   [data]
   (fn
     ([key]
-     (get data key (get @cf/config key)))
+     (get data key (get cf/config key)))
     ([key default]
-     (get data key (get @cf/config key default)))))
+     (get data key (get cf/config key default)))))
+
+
+(defmacro with-mocks
+  [rebinds & body]
+  `(with-redefs-fn ~rebinds
+     (fn [] ~@body)))
 
 (defn reset-mock!
   [m]
   (reset! m @(mk/make-mock {})))
+
+(defn pause
+  []
+  (let [^java.io.Console cnsl (System/console)]
+    (println "[waiting RETURN]")
+    (.readLine cnsl)
+    nil))
+

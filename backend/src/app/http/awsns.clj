@@ -8,10 +8,10 @@
   "AWS SNS webhook handler for bounces."
   (:require
    [app.common.exceptions :as ex]
+   [app.common.logging :as l]
    [app.db :as db]
    [app.db.sql :as sql]
    [app.util.http :as http]
-   [app.util.logging :as l]
    [clojure.spec.alpha :as s]
    [cuerdas.core :as str]
    [integrant.core :as ig]
@@ -173,14 +173,14 @@
 
 (defn- process-report
   [cfg {:keys [type profile-id] :as report}]
-  (l/trace :action "procesing report" :report (pr-str report))
+  (l/trace :action "processing report" :report (pr-str report))
   (cond
     ;; In this case we receive a bounce/complaint notification without
     ;; confirmed identity, we just emit a warning but do nothing about
     ;; it because this is not a normal case. All notifications should
     ;; come with profile identity.
     (nil? profile-id)
-    (l/warn :msg "a notification without identity recevied from AWS"
+    (l/warn :msg "a notification without identity received from AWS"
             :report (pr-str report))
 
     (= "bounce" type)

@@ -71,18 +71,81 @@
 
 ;; --- EVENT TRANSLATION
 
-(defmulti ^:private process-event ptk/type)
+(derive :app.main.data.comments/create-comment ::generic-action)
+(derive :app.main.data.comments/create-comment-thread ::generic-action)
+(derive :app.main.data.comments/delete-comment ::generic-action)
+(derive :app.main.data.comments/delete-comment-thread ::generic-action)
+(derive :app.main.data.comments/open-comment-thread ::generic-action)
+(derive :app.main.data.comments/update-comment ::generic-action)
+(derive :app.main.data.comments/update-comment-thread ::generic-action)
+(derive :app.main.data.comments/update-comment-thread-status ::generic-action)
+(derive :app.main.data.dashboard/delete-team-member ::generic-action)
+(derive :app.main.data.dashboard/duplicate-project ::generic-action)
+(derive :app.main.data.dashboard/file-created ::generic-action)
+(derive :app.main.data.dashboard/invite-team-member ::generic-action)
+(derive :app.main.data.dashboard/leave-team ::generic-action)
+(derive :app.main.data.dashboard/move-files ::generic-action)
+(derive :app.main.data.dashboard/move-project ::generic-action)
+(derive :app.main.data.dashboard/project-created ::generic-action)
+(derive :app.main.data.dashboard/rename-file ::generic-action)
+(derive :app.main.data.dashboard/set-file-shared ::generic-action)
+(derive :app.main.data.dashboard/update-team-member-role ::generic-action)
+(derive :app.main.data.dashboard/update-team-photo ::generic-action)
+(derive :app.main.data.fonts/add-font ::generic-action)
+(derive :app.main.data.fonts/delete-font ::generic-action)
+(derive :app.main.data.fonts/delete-font-variant ::generic-action)
+(derive :app.main.data.users/logout ::generic-action)
+(derive :app.main.data.users/request-email-change ::generic-action)
+(derive :app.main.data.users/update-password ::generic-action)
+(derive :app.main.data.users/update-photo ::generic-action)
+(derive :app.main.data.workspace.comments/open-comment-thread ::generic-action)
+(derive :app.main.data.workspace.libraries/add-color ::generic-action)
+(derive :app.main.data.workspace.libraries/add-media ::generic-action)
+(derive :app.main.data.workspace.libraries/add-typography ::generic-action)
+(derive :app.main.data.workspace.libraries/delete-color ::generic-action)
+(derive :app.main.data.workspace.libraries/delete-media ::generic-action)
+(derive :app.main.data.workspace.libraries/delete-typography ::generic-action)
+(derive :app.main.data.workspace.persistence/attach-library ::generic-action)
+(derive :app.main.data.workspace.persistence/detach-library ::generic-action)
+(derive :app.main.data.workspace.persistence/set-file-shard ::generic-action)
+(derive :app.main.data.workspace/create-page ::generic-action)
+(derive :app.main.data.workspace/set-workspace-layout ::generic-action)
+
+
+(defmulti process-event ptk/type)
 (defmethod process-event :default [_] nil)
 
 (defmethod process-event ::event
   [event]
-  (let [data (deref event)]
+  (let [data   (deref event)
+        origin (::origin data)]
     (when (::name data)
       (d/without-nils
        {:type    (::type data "action")
         :name    (::name data)
         :context (::context data)
-        :props   (dissoc data ::name ::type ::context)}))))
+        :props   (-> data
+                     (dissoc ::name)
+                     (dissoc ::type)
+                     (dissoc ::origin)
+                     (dissoc ::context)
+                     (cond-> origin (assoc :origin origin)))}))))
+
+(defmethod process-event ::generic-action
+  [event]
+  (let [type  (ptk/type event)
+        mdata (meta event)
+        data  (if (satisfies? IDeref event)
+                (deref event)
+                {})]
+
+    {:type    "action"
+     :name    (or (::name mdata) (name type))
+     :props   (merge data (d/without-nils (::props mdata)))
+     :context (d/without-nils
+               {:event-origin (::origin mdata)
+                :event-namespace (namespace type)
+                :event-symbol (name type)})}))
 
 (defmethod process-event :app.util.router/navigated
   [event]
@@ -113,42 +176,6 @@
      :profile-id (:id data)
      :props (d/without-nils props)}))
 
-(defmethod process-event :app.main.data.dashboard/project-created
-  [event]
-  (let [data (deref event)]
-    {:type "action"
-     :name "create-project"
-     :props {:id (:id data)
-             :team-id (:team-id data)}}))
-
-(defmethod process-event :app.main.data.dashboard/file-created
-  [event]
-  (let [data (deref event)]
-    {:type "action"
-     :name "create-file"
-     :props {:id (:id data)
-             :project-id (:project-id data)}}))
-
-(defmethod process-event :app.main.data.workspace/create-page
-  [event]
-  (let [data (deref event)]
-    {:type "action"
-     :name "create-page"
-     :props {:id (:id data)
-             :file-id (:file-id data)
-             :project-id (:project-id data)}}))
-
-(defn- event->generic-action
-  [_ name]
-  {:type "action"
-   :name name
-   :props {}})
-
-(defmethod process-event :app.main.data.users/logout
-  [event]
-  (event->generic-action event "signout"))
-
-
 ;; --- MAIN LOOP
 
 (defn- append-to-buffer
@@ -164,34 +191,26 @@
 (defn- persist-events
   [events]
   (if (seq events)
-    (let [uri    (u/join cf/public-uri "events")
-          params {:events events}]
-      (->> (http/send! {:uri uri
-                        :method :post
-                        :body (http/transit-data params)})
+    (let [uri    (u/join cf/public-uri "api/audit/events")
+          params {:uri uri
+                  :method :post
+                  :body (http/transit-data {:events events})}]
+      (->> (http/send! params)
            (rx/mapcat rp/handle-response)))
     (rx/of nil)))
 
-(defmethod ptk/resolve ::persistence
-  [_ {:keys [buffer] :as params}]
-  (ptk/reify ::persistence
-    ptk/EffectEvent
-    (effect [_ state _]
-      (let [profile-id (:profile-id state)
-            events     (into [] (take max-buffer-size) @buffer)]
-        (when (seq events)
-          (->> events
-               (filterv #(= profile-id (:profile-id %)))
-               (persist-events)
-               (rx/subs (fn [_]
-                          (swap! buffer remove-from-buffer (count events))))))))))
-
 (defn initialize
   []
-  (let [buffer (atom #queue [])]
-    (ptk/reify ::initialize
-      ptk/WatchEvent
-      (watch [_ _ stream]
+  (ptk/reify ::initialize
+    ptk/EffectEvent
+    (effect [_ _ stream]
+      (let [session (atom nil)
+            buffer  (atom #queue [])
+            profile (->> (rx/from-atom storage {:emit-current-value? true})
+                         (rx/map :profile)
+                         (rx/map :id)
+                         (rx/dedupe))]
+
         (->> (rx/merge
               (->> (rx/from-atom buffer)
                    (rx/filter #(pos? (count %)))
@@ -199,49 +218,43 @@
               (->> stream
                    (rx/filter (ptk/type? :app.main.data.users/logout))
                    (rx/observe-on :async)))
-             (rx/map #(ptk/event ::persistence {:buffer buffer}))))
+             (rx/map (fn [_]
+                       (into [] (take max-buffer-size) @buffer)))
+             (rx/with-latest-from profile)
+             (rx/mapcat (fn [[chunk profile-id]]
+                          (let [events (filterv #(= profile-id (:profile-id %)) chunk)]
+                            (->> (persist-events events)
+                                 (rx/map (constantly chunk))))))
+             (rx/subs (fn [chunk]
+                        (swap! buffer remove-from-buffer (count chunk)))))
 
-      ptk/EffectEvent
-      (effect [_ _ stream]
-        (let [events  (methods process-event)
-              session (atom nil)
 
-              profile (->> (rx/from-atom storage {:emit-current-value? true})
-                           (rx/map :profile)
-                           (rx/map :id)
-                           (rx/dedupe))
+        (->> stream
+             (rx/with-latest-from profile)
+             (rx/map (fn [result]
+                       (let [event      (aget result 0)
+                             profile-id (aget result 1)]
+                         (some-> (process-event event)
+                                 (update :profile-id #(or % profile-id))))))
+             (rx/filter :profile-id)
+             (rx/map (fn [event]
+                       (let [session* (or @session (dt/now))
+                             context  (-> @context
+                                          (d/merge (:context event))
+                                          (assoc :session session*))]
+                         (reset! session session*)
+                         (-> event
+                             (assoc :timestamp (dt/now))
+                             (assoc :context context)))))
 
-              source  (->> stream
-                           (rx/with-latest-from profile)
-                           (rx/map (fn [result]
-                                     (let [event      (aget result 0)
-                                           profile-id (aget result 1)
-                                           type       (ptk/type event)
-                                           impl-fn    (get events type)]
-                                       (when (fn? impl-fn)
-                                         (some-> (impl-fn event)
-                                                 (update :profile-id #(or % profile-id)))))))
-                           (rx/filter :profile-id)
-                           (rx/map (fn [event]
-                                     (let [session* (or @session (dt/now))
-                                           context  (-> @context
-                                                        (d/merge (:context event))
-                                                        (assoc :session session*))]
-                                       (reset! session session*)
-                                       (-> event
-                                           (assoc :timestamp (dt/now))
-                                           (assoc :context context)))))
-                           (rx/share))]
-          (->> source
-               (rx/switch-map #(rx/timer (inst-ms session-timeout)))
-               (rx/subs #(reset! session nil)))
+             (rx/tap (fn [event]
+                       (swap! buffer append-to-buffer event)))
 
-          (->> source
-               (rx/subs (fn [event]
-                          (swap! buffer append-to-buffer event)))))))))
+             (rx/switch-map #(rx/timer (inst-ms session-timeout)))
+             (rx/subs #(reset! session nil)))))))
 
 (defmethod ptk/resolve ::initialize
   [_ params]
-  (if cf/analytics
+  (if (contains? @cf/flags :audit-log)
     (initialize)
     (ptk/data-event ::initialize params)))

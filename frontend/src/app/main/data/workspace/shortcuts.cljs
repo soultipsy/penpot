@@ -91,7 +91,11 @@
 
    :create-component   {:tooltip (ds/meta "K")
                         :command (ds/c-mod "k")
-                        :fn #(st/emit! dwl/add-component)}
+                        :fn #(st/emit! (dwl/add-component))}
+
+   :detach-component   {:tooltip (ds/meta-shift "K")
+                        :command (ds/c-mod "shift+k")
+                        :fn #(st/emit! dwl/detach-selected-components)}
 
    :flip-vertical      {:tooltip (ds/shift "V")
                         :command "shift+v"
@@ -115,7 +119,7 @@
 
    :duplicate          {:tooltip (ds/meta "D")
                         :command (ds/c-mod "d")
-                        :fn #(st/emit! dw/duplicate-selected)}
+                        :fn #(st/emit! (dw/duplicate-selected true))}
 
    :undo               {:tooltip (ds/meta "Z")
                         :command (ds/c-mod "z")
@@ -229,11 +233,19 @@
 
    :open-color-picker  {:tooltip "I"
                         :command "i"
-                        :fn #(st/emit! (mdc/picker-for-selected-shape ))}
+                        :fn #(st/emit! (mdc/picker-for-selected-shape))}
 
    :open-viewer        {:tooltip "G V"
                         :command "g v"
                         :fn #(st/emit! (dw/go-to-viewer))}
+
+   :open-handoff       {:tooltip "G H"
+                        :command "g h"
+                        :fn #(st/emit! (dw/go-to-viewer {:section :handoff}))}
+
+   :open-comments      {:tooltip "G C"
+                        :command "g c"
+                        :fn #(st/emit! (dw/go-to-viewer {:section :comments}))}
 
    :open-dashboard     {:tooltip "G D"
                         :command "g d"
@@ -256,7 +268,66 @@
                         :command ["alt" "."]
                         :type "keyup"
                         :fn #(st/emit! (dw/toggle-distances-display false))}
-   })
+
+   :boolean-union      {:tooltip (ds/meta (ds/alt "U"))
+                        :command (ds/c-mod "alt+u")
+                        :fn #(st/emit! (dw/create-bool :union))}
+
+   :boolean-difference {:tooltip (ds/meta (ds/alt "D"))
+                        :command (ds/c-mod "alt+d")
+                        :fn #(st/emit! (dw/create-bool :difference))}
+
+   :boolean-intersection {:tooltip (ds/meta (ds/alt "I"))
+                          :command (ds/c-mod "alt+i")
+                          :fn #(st/emit! (dw/create-bool :intersection))}
+
+   :boolean-exclude      {:tooltip (ds/meta (ds/alt "E"))
+                          :command (ds/c-mod "alt+e")
+                          :fn #(st/emit! (dw/create-bool :exclude))}
+
+   :align-left           {:tooltip (ds/alt "A")
+                          :command "alt+a"
+                          :fn #(st/emit! (dw/align-objects :hleft))}
+
+   :align-right          {:tooltip (ds/alt "D")
+                          :command "alt+d"
+                          :fn #(st/emit! (dw/align-objects :hright))}
+
+   :align-top            {:tooltip (ds/alt "W")
+                          :command "alt+w"
+                          :fn #(st/emit! (dw/align-objects :vtop))}
+
+   :align-hcenter        {:tooltip (ds/alt "H")
+                          :command "alt+h"
+                          :fn #(st/emit! (dw/align-objects :hcenter))}
+
+   :align-vcenter        {:tooltip (ds/alt "V")
+                          :command "alt+v"
+                          :fn #(st/emit! (dw/align-objects :vcenter))}
+
+   :align-bottom         {:tooltip (ds/alt "S")
+                          :command "alt+s"
+                          :fn #(st/emit! (dw/align-objects :vbottom))}
+
+   :h-distribute         {:tooltip (ds/meta-shift (ds/alt "H"))
+                          :command (ds/c-mod "shift+alt+h")
+                          :fn #(st/emit! (dw/distribute-objects :horizontal))}
+
+   :v-distribute         {:tooltip (ds/meta-shift (ds/alt "V"))
+                          :command (ds/c-mod "shift+alt+v")
+                          :fn #(st/emit! (dw/distribute-objects :vertical))}
+
+   :toggle-visibility    {:tooltip (ds/meta-shift "H")
+                          :command (ds/c-mod "shift+h")
+                          :fn #(st/emit! (dw/toggle-visibility-selected))}
+
+   :toggle-lock          {:tooltip (ds/meta-shift "L")
+                          :command (ds/c-mod "shift+l")
+                          :fn #(st/emit! (dw/toggle-lock-selected))}
+
+   :toggle-lock-size     {:tooltip (ds/meta (ds/alt "L"))
+                          :command (ds/c-mod "alt+l")
+                          :fn #(st/emit! (dw/toggle-proportion-lock))}})
 
 (defn get-tooltip [shortcut]
   (assert (contains? shortcuts shortcut) (str shortcut))

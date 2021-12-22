@@ -9,6 +9,7 @@ figwheel_server.log
 .nrepl-port
 .cpcache
 .rebel_readline_history
+.nyc_output
 /vendor/**/target
 /cd.md
 node_modules
@@ -32,10 +33,17 @@ node_modules
 /docker/images/bundle*
 /common/.shadow-cljs
 /common/target
+/common/coverage
 /.clj-kondo/.cache
+clj-profiler/
 /bundle*
 /media
 /deploy
 /web
 /_dump
 /vendor/svgclean/bundle*.js
+
+.calva
+.clj-kondo
+.lsp
+/frontend/cypress/videos/*/

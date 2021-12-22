@@ -20,6 +20,7 @@
    [app.main.ui.shapes.image :as image]
    [app.main.ui.shapes.rect :as rect]
    [app.main.ui.shapes.text.fontfaces :as ff]
+   [app.main.ui.workspace.shapes.bool :as bool]
    [app.main.ui.workspace.shapes.bounding-box :refer [bounding-box]]
    [app.main.ui.workspace.shapes.common :as common]
    [app.main.ui.workspace.shapes.frame :as frame]
@@ -27,14 +28,15 @@
    [app.main.ui.workspace.shapes.path :as path]
    [app.main.ui.workspace.shapes.svg-raw :as svg-raw]
    [app.main.ui.workspace.shapes.text :as text]
-   [app.util.debug :refer [debug?]]
    [app.util.object :as obj]
+   [debug :refer [debug?]]
    [okulary.core :as l]
    [rumext.alpha :as mf]))
 
 (declare shape-wrapper)
 (declare group-wrapper)
 (declare svg-raw-wrapper)
+(declare bool-wrapper)
 (declare frame-wrapper)
 
 (def circle-wrapper (common/generic-wrapper-factory circle/circle-shape))
@@ -92,13 +94,14 @@
       [:*
        (if-not svg-element?
          (case (:type shape)
-           :path [:> path/path-wrapper opts]
-           :text [:> text/text-wrapper opts]
-           :group [:> group-wrapper opts]
-           :rect [:> rect-wrapper opts]
-           :image [:> image-wrapper opts]
-           :circle [:> circle-wrapper opts]
+           :path    [:> path/path-wrapper opts]
+           :text    [:> text/text-wrapper opts]
+           :group   [:> group-wrapper opts]
+           :rect    [:> rect-wrapper opts]
+           :image   [:> image-wrapper opts]
+           :circle  [:> circle-wrapper opts]
            :svg-raw [:> svg-raw-wrapper opts]
+           :bool    [:> bool-wrapper opts]
 
            ;; Only used when drawing a new frame.
            :frame [:> frame-wrapper {:shape shape}]
@@ -113,5 +116,6 @@
 
 (def group-wrapper (group/group-wrapper-factory shape-wrapper))
 (def svg-raw-wrapper (svg-raw/svg-raw-wrapper-factory shape-wrapper))
+(def bool-wrapper (bool/bool-wrapper-factory shape-wrapper))
 (def frame-wrapper (frame/frame-wrapper-factory shape-wrapper))
 

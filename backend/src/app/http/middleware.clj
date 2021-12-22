@@ -6,14 +6,14 @@
 
 (ns app.http.middleware
   (:require
+   [app.common.logging :as l]
    [app.common.transit :as t]
+   [app.config :as cf]
    [app.metrics :as mtx]
    [app.util.json :as json]
-   [app.util.logging :as l]
    [buddy.core.codecs :as bc]
    [buddy.core.hash :as bh]
    [clojure.java.io :as io]
-   [ring.core.protocols :as rp]
    [ring.middleware.cookies :refer [wrap-cookies]]
    [ring.middleware.keyword-params :refer [wrap-keyword-params]]
    [ring.middleware.multipart-params :refer [wrap-multipart-params]]
@@ -74,28 +74,16 @@
   {:name ::parse-request-body
    :compile (constantly wrap-parse-request-body)})
 
-(defn- transit-streamable-body
-  [data opts]
-  (reify rp/StreamableResponseBody
-    (write-body-to-stream [_ response output-stream]
-      (try
-        (let [tw (t/writer output-stream opts)]
-          (t/write! tw data))
-        (finally
-          (.close ^java.io.OutputStream output-stream))))))
-
 (defn- impl-format-response-body
   [response request]
-  (let [body (:body response)
-        opts {:type :json-verbose}]
+  (let [body   (:body response)
+        params (:query-params request)
+        opts   {:type (if (contains? params "transit_verbose") :json-verbose :json)}]
     (cond
       (coll? body)
       (-> response
           (update :headers assoc "content-type" "application/transit+json")
-          (assoc :body
-                 (if (= :post (:request-method request))
-                   (transit-streamable-body body opts)
-                   (t/encode body opts))))
+          (assoc :body (t/encode body opts)))
 
       (nil? body)
       (assoc response :status 204 :body "")
@@ -190,3 +178,29 @@
                 :uri (str (:uri request) (when qstring (str "?" qstring)))
                 :method (name (:request-method request)))
         (handler request)))))
+
+(defn- wrap-cors
+  [handler]
+  (if-not (contains? cf/flags :cors)
+    handler
+    (letfn [(add-cors-headers [response request]
+              (-> response
+                  (update
+                   :headers
+                   (fn [headers]
+                     (-> headers
+                         (assoc "access-control-allow-origin" (get-in request [:headers "origin"]))
+                         (assoc "access-control-allow-methods" "GET,POST,DELETE,OPTIONS,PUT,HEAD,PATCH")
+                         (assoc "access-control-allow-credentials" "true")
+                         (assoc "access-control-expose-headers" "x-requested-with, content-type, cookie")
+                         (assoc "access-control-allow-headers" "x-frontend-version, content-type, accept, x-requested-width"))))))]
+      (fn [request]
+        (if (= (:request-method request) :options)
+          (-> {:status 200 :body ""}
+              (add-cors-headers request))
+          (let [response (handler request)]
+            (add-cors-headers response request)))))))
+
+(def cors
+  {:name ::cors
+   :compile (constantly wrap-cors)})

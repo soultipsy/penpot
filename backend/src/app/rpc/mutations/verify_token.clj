@@ -9,6 +9,8 @@
    [app.common.exceptions :as ex]
    [app.common.spec :as us]
    [app.db :as db]
+   [app.loggers.audit :as audit]
+   [app.metrics :as mtx]
    [app.rpc.mutations.teams :as teams]
    [app.rpc.queries.profile :as profile]
    [app.util.services :as sv]
@@ -32,17 +34,23 @@
   (when (profile/retrieve-profile-data-by-email conn email)
     (ex/raise :type :validation
               :code :email-already-exists))
+
   (db/update! conn :profile
               {:email email}
               {:id profile-id})
-  claims)
+
+  (with-meta claims
+    {::audit/name "update-profile-email"
+     ::audit/props {:email email}
+     ::audit/profile-id profile-id}))
 
 (defn- annotate-profile-activation
   "A helper for properly increase the profile-activation metric once the
   transaction is completed."
   [metrics]
   (fn []
-    ((get-in metrics [:definitions :profile-activation]) :inc)))
+    (let [mobj (get-in metrics [:definitions :profile-activation])]
+      ((::mtx/fn mobj) {:by 1}))))
 
 (defmethod process-token :verify-email
   [{:keys [conn session metrics] :as cfg} _ {:keys [profile-id] :as claims}]
@@ -61,7 +69,10 @@
 
     (with-meta claims
       {:transform-response ((:create session) profile-id)
-       :before-complete (annotate-profile-activation metrics)})))
+       :before-complete (annotate-profile-activation metrics)
+       ::audit/name "verify-profile-email"
+       ::audit/props (audit/profile->props profile)
+       ::audit/profile-id (:id profile)})))
 
 (defmethod process-token :auth
   [{:keys [conn] :as cfg} _params {:keys [profile-id] :as claims}]
@@ -114,8 +125,7 @@
     ;; user is already logged in with some account.
     (and (uuid? profile-id)
          (uuid? member-id))
-    (do
-      (accept-invitation cfg claims)
+    (let [profile (accept-invitation cfg claims)]
       (if (= member-id profile-id)
         ;; If the current session is already matches the invited
         ;; member, then just return the token and leave the frontend
@@ -124,35 +134,52 @@
 
         ;; If the session does not matches the invited member, replace
         ;; the session with a new one matching the invited member.
-        ;; This techinique should be considered secure because the
+        ;; This technique should be considered secure because the
         ;; user clicking the link he already has access to the email
         ;; account.
         (with-meta
           (assoc claims :state :created)
-          {:transform-response ((:create session) member-id)})))
+          {:transform-response ((:create session) member-id)
+           ::audit/name "accept-team-invitation"
+           ::audit/props (merge
+                          (audit/profile->props profile)
+                          {:team-id (:team-id claims)
+                           :role (:role claims)})
+           ::audit/profile-id profile-id})))
 
     ;; This happens when member-id is not filled in the invitation but
     ;; the user already has an account (probably with other mail) and
     ;; is already logged-in.
     (and (uuid? profile-id)
          (nil? member-id))
-    (do
-      (accept-invitation cfg (assoc claims :member-id profile-id))
-      (assoc claims :state :created))
+    (let [profile (accept-invitation cfg (assoc claims :member-id profile-id))]
+      (with-meta
+        (assoc claims :state :created)
+        {::audit/name "accept-team-invitation"
+         ::audit/props (merge
+                        (audit/profile->props profile)
+                        {:team-id (:team-id claims)
+                         :role (:role claims)})
+         ::audit/profile-id profile-id}))
 
     ;; This happens when member-id is filled but the accessing user is
     ;; not logged-in. In this case we proceed to accept invitation and
     ;; leave the user logged-in.
     (and (nil? profile-id)
          (uuid? member-id))
-    (do
-      (accept-invitation cfg claims)
+    (let [profile (accept-invitation cfg claims)]
       (with-meta
         (assoc claims :state :created)
-        {:transform-response ((:create session) member-id)}))
+        {:transform-response ((:create session) member-id)
+         ::audit/name "accept-team-invitation"
+         ::audit/props (merge
+                        (audit/profile->props profile)
+                        {:team-id (:team-id claims)
+                         :role (:role claims)})
+         ::audit/profile-id member-id}))
 
     ;; In this case, we wait until frontend app redirect user to
-    ;; registeration page, the user is correctly registered and the
+    ;; registration page, the user is correctly registered and the
     ;; register mutation call us again with the same token to finally
     ;; create the corresponding team-profile relation from the first
     ;; condition of this if.

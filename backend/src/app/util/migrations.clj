@@ -6,7 +6,7 @@
 
 (ns app.util.migrations
   (:require
-   [app.util.logging :as l]
+   [app.common.logging :as l]
    [clojure.java.io :as io]
    [clojure.spec.alpha :as s]
    [next.jdbc :as jdbc]))
@@ -20,7 +20,7 @@
 ;; --- Implementation
 
 (defn- registered?
-  "Check if concrete migration is already registred."
+  "Check if concrete migration is already registered."
   [pool modname stepname]
   (let [sql  "select * from migrations where module=? and step=?"
         rows (jdbc/execute! pool [sql modname stepname])]

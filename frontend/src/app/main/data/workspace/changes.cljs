@@ -7,6 +7,7 @@
 (ns app.main.data.workspace.changes
   (:require
    [app.common.data :as d]
+   [app.common.logging :as log]
    [app.common.pages :as cp]
    [app.common.pages.spec :as spec]
    [app.common.spec :as us]
@@ -14,7 +15,6 @@
    [app.main.data.workspace.undo :as dwu]
    [app.main.store :as st]
    [app.main.worker :as uw]
-   [app.util.logging :as log]
    [beicon.core :as rx]
    [cljs.spec.alpha :as s]
    [potok.core :as ptk]))
@@ -50,7 +50,7 @@
   (let [old-obj (get objects id)
         new-obj (update-fn old-obj)
 
-        attrs (or attrs (d/concat #{} (keys old-obj) (keys new-obj)))
+        attrs (or attrs (d/concat-set (keys old-obj) (keys new-obj)))
 
         {rops :rops uops :uops}
         (reduce #(generate-operation %1 %2 old-obj new-obj ignore-geometry?)
@@ -114,20 +114,22 @@
                 :changes changes}))))
 
 (defn commit-changes
-  [{:keys [redo-changes undo-changes origin save-undo? file-id]
+  [{:keys [redo-changes undo-changes
+           origin save-undo? file-id]
     :or {save-undo? true}}]
-
   (log/debug :msg "commit-changes"
              :js/redo-changes redo-changes
              :js/undo-changes undo-changes)
+  (let [error  (volatile! nil)
+        strace (.-stack (ex-info "" {}))]
 
-  (let [error (volatile! nil)]
     (ptk/reify ::commit-changes
       cljs.core/IDeref
       (-deref [_]
         {:file-id file-id
          :hint-events @st/last-events
          :hint-origin (ptk/type origin)
+         :hint-strace strace
          :changes redo-changes})
 
       ptk/UpdateEvent
@@ -135,7 +137,6 @@
         (let [current-file-id (get state :current-file-id)
               file-id         (or file-id current-file-id)
               path            (if (= file-id current-file-id)
-
                                 [:workspace-data]
                                 [:workspace-libraries file-id :data])]
           (try

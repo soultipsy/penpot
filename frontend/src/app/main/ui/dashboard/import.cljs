@@ -7,6 +7,8 @@
 (ns app.main.ui.dashboard.import
   (:require
    [app.common.data :as d]
+   [app.common.logging :as log]
+   [app.main.data.events :as ev]
    [app.main.data.modal :as modal]
    [app.main.store :as st]
    [app.main.ui.components.file-uploader :refer [file-uploader]]
@@ -15,11 +17,11 @@
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.keyboard :as kbd]
-   [app.util.logging :as log]
    [beicon.core :as rx]
+   [potok.core :as ptk]
    [rumext.alpha :as mf]))
 
-(log/set-level! :debug)
+(log/set-level! :warn)
 
 (def ^:const emit-delay 1000)
 
@@ -96,23 +98,53 @@
        (filter #(= :ready (:status %)))
        (mapv #(assoc % :status :importing))))
 
-(defn update-status [files file-id status]
+(defn update-status [files file-id status progress]
   (->> files
        (mapv (fn [file]
                (cond-> file
-                 (= file-id (:file-id file))
-                 (assoc :status status))))))
+                 (and (= file-id (:file-id file)) (not= status :import-progress))
+                 (assoc :status status)
+
+                 (and (= file-id (:file-id file)) (= status :import-progress))
+                 (assoc :progress progress))))))
+
+(defn parse-progress-message
+  [message]
+  (case (:type message)
+    :upload-data
+    (tr "dashboard.import.progress.upload-data" (:current message) (:total message))
+
+    :upload-media
+    (tr "dashboard.import.progress.upload-media" (:file message))
+
+    :process-page
+    (tr "dashboard.import.progress.process-page" (:file message))
+
+    :process-colors
+    (tr "dashboard.import.progress.process-colors")
+
+    :process-typographies
+    (tr "dashboard.import.progress.process-typographies")
+
+    :process-media
+    (tr "dashboard.import.progress.process-media")
+
+    :process-components
+    (tr "dashboard.import.progress.process-components")
+
+    (str message)))
 
 (mf/defc import-entry
   [{:keys [state file editing?]}]
 
-  (let [loading?      (or (= :analyzing (:status file))
-                          (= :importing (:status file)))
-        load-success? (= :import-success (:status file))
-        analyze-error?   (= :analyze-error (:status file))
-        import-error?   (= :import-error (:status file))
-        ready?        (= :ready (:status file))
-        is-shared?    (:shared file)
+  (let [loading?       (or (= :analyzing (:status file))
+                           (= :importing (:status file)))
+        load-success?  (= :import-success (:status file))
+        analyze-error? (= :analyze-error (:status file))
+        import-error?  (= :import-error (:status file))
+        ready?         (= :ready (:status file))
+        is-shared?     (:shared file)
+        progress       (:progress file)
 
         handle-edit-key-press
         (mf/use-callback
@@ -171,13 +203,17 @@
        [:button {:on-click handle-edit-entry}   i/pencil]
        [:button {:on-click handle-remove-entry} i/trash]]]
 
-     (when analyze-error?
+     (cond
+       analyze-error?
        [:div.error-message
-        (tr "dashboard.import.analyze-error")])
+        (tr "dashboard.import.analyze-error")]
 
-     (when import-error?
+       import-error?
        [:div.error-message
-        (tr "dashboard.import.import-error")])
+        (tr "dashboard.import.import-error")]
+
+       (and (not load-success?) (some? progress))
+       [:div.progress-message (parse-progress-message progress)])
 
      [:div.linked-libraries
       (for [library-id (:libraries file)]
@@ -214,15 +250,17 @@
         import-files
         (mf/use-callback
          (fn [project-id files]
+           (st/emit! (ptk/event ::ev/event {::ev/name "import-files"
+                                            :num-files (count files)}))
+
            (->> (uw/ask-many!
                  {:cmd :import-files
                   :project-id project-id
                   :files files})
-                (rx/delay-emit emit-delay)
                 (rx/subs
-                 (fn [{:keys [file-id status] :as msg}]
+                 (fn [{:keys [file-id status message] :as msg}]
                    (log/debug :msg msg)
-                   (swap! state update :files update-status file-id status))))))
+                   (swap! state update :files update-status file-id status message))))))
 
         handle-cancel
         (mf/use-callback
@@ -293,10 +331,11 @@
 
       [:div.modal-footer
        [:div.action-buttons
-        [:input.cancel-button
-         {:type "button"
-          :value (tr "labels.cancel")
-          :on-click handle-cancel}]
+        (when (or (= :analyzing (:status @state)) pending-import?)
+          [:input.cancel-button
+           {:type "button"
+            :value (tr "labels.cancel")
+            :on-click handle-cancel}])
 
         (when (= :analyzing (:status @state))
           [:input.accept-button

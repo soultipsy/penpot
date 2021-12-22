@@ -6,6 +6,8 @@
 
 (ns app.main.ui.shapes.attrs
   (:require
+   [app.common.pages.spec :as spec]
+   [app.common.types.radius :as ctr]
    [app.main.ui.context :as muc]
    [app.util.object :as obj]
    [app.util.svg :as usvg]
@@ -13,12 +15,14 @@
    [rumext.alpha :as mf]))
 
 (defn- stroke-type->dasharray
-  [style]
-  (case style
-    :mixed "5,5,1,5"
-    :dotted "5,5"
-    :dashed "10,10"
-    nil))
+  [width style]
+  (let [values (case style
+                 :mixed [5 5 1 5]
+                 :dotted [5 5]
+                 :dashed [10 10]
+                 nil)]
+
+    (->> values (map #(+ % width)) (str/join ","))))
 
 (defn- truncate-side
   [shape ra-attr rb-attr dimension-attr]
@@ -50,7 +54,13 @@
      (min r-bottom-left r-left-bottom)]))
 
 (defn add-border-radius [attrs shape]
-  (if (or (:r1 shape) (:r2 shape) (:r3 shape) (:r4 shape))
+  (case (ctr/radius-mode shape)
+
+    :radius-1
+    (obj/merge! attrs #js {:rx (:rx shape)
+                           :ry (:ry shape)})
+
+    :radius-4
     (let [[r1 r2 r3 r4] (truncate-radius shape)
           top    (- (:width shape) r1 r2)
           right  (- (:height shape) r2 r3)
@@ -66,10 +76,7 @@
                                      "v" (- left) " "
                                      "a" r1 "," r1 " 0 0 1 " r1 "," (- r1) " "
                                      "z")}))
-    (if (or (:rx shape) (:ry shape))
-      (obj/merge! attrs #js {:rx (:rx shape)
-                             :ry (:ry shape)})
-      attrs)))
+    attrs))
 
 (defn add-fill [attrs shape render-id]
   (let [fill-attrs (cond
@@ -101,10 +108,11 @@
 
 (defn add-stroke [attrs shape render-id]
   (let [stroke-style (:stroke-style shape :none)
-        stroke-color-gradient-id (str "stroke-color-gradient_" render-id)]
+        stroke-color-gradient-id (str "stroke-color-gradient_" render-id)
+        stroke-width (:stroke-width shape 1)]
     (if (not= stroke-style :none)
       (let [stroke-attrs
-            (cond-> {:strokeWidth (:stroke-width shape 1)}
+            (cond-> {:strokeWidth stroke-width}
               (:stroke-color-gradient shape)
               (assoc :stroke (str/format "url(#%s)" stroke-color-gradient-id))
 
@@ -117,7 +125,31 @@
               (assoc :strokeOpacity (:stroke-opacity shape nil))
 
               (not= stroke-style :svg)
-              (assoc :strokeDasharray (stroke-type->dasharray stroke-style)))]
+              (assoc :strokeDasharray (stroke-type->dasharray stroke-width stroke-style))
+
+              ;; For simple line caps we use svg stroke-line-cap attribute. This
+              ;; only works if all caps are the same and we are not using the tricks
+              ;; for inner or outer strokes.
+              (and (spec/stroke-caps-line (:stroke-cap-start shape))
+                   (= (:stroke-cap-start shape) (:stroke-cap-end shape))
+                   (not (#{:inner :outer} (:stroke-alignment shape))))
+              (assoc :strokeLinecap (:stroke-cap-start shape))
+
+              ;; For other cap types we use markers.
+              (and (or (spec/stroke-caps-marker (:stroke-cap-start shape))
+                       (and (spec/stroke-caps-line (:stroke-cap-start shape))
+                            (not= (:stroke-cap-start shape) (:stroke-cap-end shape))))
+                   (not (#{:inner :outer} (:stroke-alignment shape))))
+              (assoc :markerStart
+                     (str/format "url(#marker-%s-%s)" render-id (name (:stroke-cap-start shape))))
+
+              (and (or (spec/stroke-caps-marker (:stroke-cap-end shape))
+                       (and (spec/stroke-caps-line (:stroke-cap-end shape))
+                            (not= (:stroke-cap-start shape) (:stroke-cap-end shape))))
+                   (not (#{:inner :outer} (:stroke-alignment shape))))
+              (assoc :markerEnd
+                     (str/format "url(#marker-%s-%s)" render-id (name (:stroke-cap-end shape)))))]
+
         (obj/merge! attrs (clj->js stroke-attrs)))
       attrs)))
 
@@ -134,7 +166,8 @@
                        id))
         svg-attrs (-> svg-attrs
                       (usvg/clean-attrs)
-                      (usvg/update-attr-ids replace-id))
+                      (usvg/update-attr-ids replace-id)
+                      (dissoc :id))
 
         attrs  (-> svg-attrs (dissoc :style) (clj->js))
         styles (-> svg-attrs (:style {}) (clj->js))]

@@ -14,7 +14,7 @@
 
    ;; NOTE: don't remove this, causes exception on advanced build
    ;; because of some strange interaction with cljs.spec.alpha and
-   ;; modules spliting.
+   ;; modules splitting.
    [app.common.exceptions :as ex]
    [app.common.geom.point :as gpt]
    [app.common.uuid :as uuid]
@@ -124,7 +124,6 @@
 
 (s/def ::bytes bytes?)
 
-
 (s/def ::safe-integer
   #(and
     (int? %)
@@ -139,8 +138,28 @@
     (<= % max-safe-int)))
 
 
+;; --- SPEC: set of Keywords
+
+(s/def ::set-of-keywords
+  (s/conformer
+   (fn [s]
+     (let [xform (comp
+                  (map (fn [s]
+                         (cond
+                           (string? s) (keyword s)
+                           (keyword? s) s
+                           :else nil)))
+                  (filter identity))]
+       (cond
+         (set? s)    (into #{} xform s)
+         (string? s) (into #{} xform (str/words s))
+         :else       ::s/invalid)))
+   (fn [s]
+     (str/join " " (map name s)))))
+
 ;; --- SPEC: email
-(def email-re  #"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+
+(def email-re #"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
 
 (s/def ::email
   (s/conformer
@@ -151,6 +170,23 @@
          (do ::s/invalid))
        ::s/invalid))
    str))
+
+(s/def ::set-of-emails
+  (s/conformer
+   (fn [v]
+     (cond
+       (string? v)
+       (into #{} (re-seq email-re v))
+
+       (or (set? v) (sequential? v))
+       (->> (str/join " " v)
+            (re-seq email-re)
+            (into #{}))
+
+       :else ::s/invalid))
+
+   (fn [v]
+     (str/join " " v))))
 
 ;; --- SPEC: set-of-str
 
@@ -196,7 +232,7 @@
                      :name (pr-str spec)
                      :line (:line &env)
                      :file (:file (:meta nsdata))})
-          message (str "Spec Assertion: '" (pr-str spec) "'")]
+          message (str "spec assert: '" (pr-str spec) "'")]
       `(spec-assert* ~spec ~x ~message ~context))))
 
 (defmacro verify
@@ -208,7 +244,7 @@
                    :name (pr-str spec)
                    :line (:line &env)
                    :file (:file (:meta nsdata))})
-        message (str "Spec Assertion: '" (pr-str spec) "'")]
+        message (str "spec verify: '" (pr-str spec) "'")]
     `(spec-assert* ~spec ~x ~message ~context)))
 
 ;; --- Public Api

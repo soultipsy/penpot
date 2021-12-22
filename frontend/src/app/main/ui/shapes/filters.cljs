@@ -149,8 +149,7 @@
 
 (defn shape->filters
   [shape]
-  (d/concat
-   []
+  (d/concat-vec
    [{:id "BackgroundImageFix" :type :image-fix}]
 
    ;; Background blur won't work in current SVG specification
@@ -201,6 +200,14 @@
           :width (- x2 x1)
           :height (- y2 y1)})))))
 
+(defn calculate-padding [shape]
+  (let [stroke-width (case (:stroke-alignment shape :center)
+                       :center (/ (:stroke-width shape 0) 2)
+                       :outer (:stroke-width shape 0)
+                       0)
+        margin (gsh/shape-stroke-margin shape stroke-width)]
+    (+ stroke-width margin)))
+
 (mf/defc filters
   [{:keys [filter-id shape]}]
 
@@ -208,16 +215,16 @@
 
         ;; Adds the previous filter as `filter-in` parameter
         filters (map #(assoc %1 :filter-in %2) filters (cons nil (map :id filters)))
-
-        bounds (get-filters-bounds shape filters (or (-> shape :blur :value) 0))]
+        bounds (get-filters-bounds shape filters (or (-> shape :blur :value) 0))
+        padding (calculate-padding shape)]
 
     [:*
      (when (> (count filters) 2)
        [:filter {:id filter-id
-                 :x (:x bounds)
-                 :y (:y bounds)
-                 :width (:width bounds)
-                 :height (:height bounds)
+                 :x (- (:x bounds) padding)
+                 :y (- (:y bounds) padding)
+                 :width (+ (:width bounds) (* 2 padding))
+                 :height (+ (:height bounds) (* 2 padding))
                  :filterUnits "userSpaceOnUse"
                  :color-interpolation-filters "sRGB"}
 

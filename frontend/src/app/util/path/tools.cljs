@@ -8,14 +8,14 @@
   (:require
    [app.common.data :as d]
    [app.common.geom.point :as gpt]
+   [app.common.geom.shapes.path :as upg]
    [app.common.math :as mth]
-   [app.util.path.commands :as upc]
-   [app.util.path.geom :as upg]
+   [app.common.path.commands :as upc]
    [clojure.set :as set]))
 
 (defn remove-line-curves
   "Remove all curves that have both handlers in the same position that the
-  beggining and end points. This makes them really line-to commands"
+  beginning and end points. This makes them really line-to commands"
   [content]
   (let [with-prev (d/enumerate (d/with-prev content))
         process-command
@@ -210,7 +210,7 @@
           (case (:command cmd)
             :line-to [index (upg/split-line-to start cmd value)]
             :curve-to [index (upg/split-curve-to start cmd value)]
-            :close-path [index [(upc/make-line-to (gpt/line-val start end value)) cmd]]
+            :close-path [index [(upc/make-line-to (gpt/lerp start end value)) cmd]]
             nil))
 
         cmd-changes
@@ -304,7 +304,7 @@
   [content points]
 
   (let [segments-set (into #{}
-                           (map (fn [{:keys [start end]}] [start end]))
+                           (juxt :start :end)
                            (get-segments content points))
 
         create-line-command (fn [point other]
@@ -318,7 +318,7 @@
                          (flatten)
                          (into []))]
 
-    (d/concat content new-content)))
+    (into content new-content)))
 
 
 (defn separate-nodes
@@ -426,7 +426,7 @@
          (mapv replace-command))))
 
 (defn merge-nodes
-  "Reduces the continguous segments in points to a single point"
+  "Reduces the contiguous segments in points to a single point"
   [content points]
   (let [point->merge-point (-> content
                                (get-segments points)
