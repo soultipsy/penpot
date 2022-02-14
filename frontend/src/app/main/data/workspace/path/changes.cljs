@@ -6,7 +6,7 @@
 
 (ns app.main.data.workspace.path.changes
   (:require
-   [app.common.pages :as cp]
+   [app.common.pages.helpers :as cph]
    [app.common.spec :as us]
    [app.main.data.workspace.changes :as dch]
    [app.main.data.workspace.path.helpers :as helpers]
@@ -24,12 +24,17 @@
   (let [shape-id     (:id shape)
         frame-id     (:frame-id shape)
         parent-id    (:parent-id shape)
-        parent-index (cp/position-on-parent shape-id objects)
+        parent-index (cph/get-position-on-parent objects shape-id)
 
         [old-points old-selrect] (helpers/content->points+selrect shape old-content)
         [new-points new-selrect] (helpers/content->points+selrect shape new-content)
 
-        rch (if (empty? new-content)
+        rch (cond
+              ;; https://tree.taiga.io/project/penpot/issue/2366
+              (nil? shape-id)
+              []
+
+              (empty? new-content)
               [{:type :del-obj
                 :id shape-id
                 :page-id page-id}
@@ -37,6 +42,7 @@
                 :page-id page-id
                 :shapes [shape-id]}]
 
+              :else
               [{:type :mod-obj
                 :id shape-id
                 :page-id page-id
@@ -47,7 +53,12 @@
                 :page-id page-id
                 :shapes [shape-id]}])
 
-        uch (if (empty? new-content)
+        uch (cond
+              ;; https://tree.taiga.io/project/penpot/issue/2366
+              (nil? shape-id)
+              []
+
+              (empty? new-content)
               [{:type :add-obj
                 :id shape-id
                 :obj shape
@@ -58,6 +69,8 @@
                {:type :reg-objects
                 :page-id page-id
                 :shapes [shape-id]}]
+
+              :else
               [{:type :mod-obj
                 :id shape-id
                 :page-id page-id

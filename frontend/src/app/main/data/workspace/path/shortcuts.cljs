@@ -28,7 +28,7 @@
                            (get-in state [:workspace-local :edition]))
             path-edit-mode (get-in state [:workspace-local :edit-path edition-id :edit-mode])]
         (if-not (= :draw path-edit-mode)
-          (rx/of :interrupt (dw/deselect-all true))
+          (rx/of :interrupt)
           (rx/empty))))))
 
 (def shortcuts
@@ -73,12 +73,8 @@
                      :fn #(st/emit! (drp/toggle-snap))}
 
    :escape          {:tooltip (ds/esc)
-                     :command "escape"
+                     :command ["escape" "enter" "v"]
                      :fn #(st/emit! (esc-pressed))}
-
-   :start-editing   {:tooltip (ds/enter)
-                     :command "enter"
-                     :fn #(st/emit! (dw/start-editing-selected))}
 
    :undo            {:tooltip (ds/meta "Z")
                      :command (ds/c-mod "z")
@@ -142,9 +138,7 @@
 
    :move-unit-right {:tooltip ds/left-arrow
                      :command "left"
-                     :fn #(st/emit! (drp/move-selected :left false))}
-
-   })
+                     :fn #(st/emit! (drp/move-selected :left false))}})
 
 (defn get-tooltip [shortcut]
   (assert (contains? shortcuts shortcut) (str shortcut))

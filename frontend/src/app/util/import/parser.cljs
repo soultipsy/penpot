@@ -9,7 +9,7 @@
    [app.common.data :as d]
    [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
-   [app.common.types.interactions :as cti]
+   [app.common.spec.interactions :as cti]
    [app.common.uuid :as uuid]
    [app.util.color :as uc]
    [app.util.json :as json]
@@ -21,6 +21,9 @@
 
 (def uuid-regex
   #"\w{8}-\w{4}-\w{4}-\w{4}-\w{12}")
+
+(def uuid-regex-prefix
+  #"\w{8}-\w{4}-\w{4}-\w{4}-\w{12}-")
 
 (defn valid?
   [root]
@@ -207,7 +210,8 @@
 
             svg-node (if (= :svg tag)
                        (->> node :content last :content last)
-                       (->> node :content last))]
+                       (->> node :content last))
+            svg-node (d/update-in-when svg-node [:attrs :style] parse-style)]
         (merge (add-attrs {} (:attrs svg-node)) node-attrs))
 
       (= type :bool)
@@ -358,8 +362,13 @@
   [props node svg-data]
 
   (let [fill (:fill svg-data)
+        hide-fill-on-export (get-meta node :hide-fill-on-export str->bool)
         gradient (when (str/starts-with? fill "url")
-                   (parse-gradient node fill))]
+                   (parse-gradient node fill))
+        meta-fill-color (get-meta node :fill-color)
+        meta-fill-opacity (get-meta node :fill-opacity)
+        meta-fill-color-gradient (get-meta node :fill-color-gradient)]
+
     (cond-> props
       :always
       (assoc :fill-color nil
@@ -372,7 +381,19 @@
 
       (uc/hex? fill)
       (assoc :fill-color fill
-             :fill-opacity (-> svg-data (:fill-opacity "1") d/parse-double)))))
+             :fill-opacity (-> svg-data (:fill-opacity "1") d/parse-double))
+
+      (some? hide-fill-on-export)
+      (assoc :hide-fill-on-export hide-fill-on-export)
+
+      (some? meta-fill-color)
+      (assoc :fill-color meta-fill-color
+             :fill-opacity (d/parse-double meta-fill-opacity))
+
+      (some? meta-fill-color-gradient)
+      (assoc :fill-color-gradient meta-fill-color-gradient
+             :fill-color nil
+             :fill-opacity nil))))
 
 (defn add-stroke
   [props node svg-data]
@@ -507,6 +528,20 @@
   (let [flows-node (get-data node :penpot:flows)]
     (->> flows-node :content (mapv parse-flow-node))))
 
+(defn parse-guide-node [node]
+  (let [attrs (-> node :attrs remove-penpot-prefix)]
+    (println attrs)
+    (let [id (uuid/next)]
+      [id
+       {:id       id
+        :frame-id (when (:frame-id attrs) (-> attrs :frame-id uuid))
+        :axis     (-> attrs :axis keyword)
+        :position (-> attrs :position d/parse-double)}])))
+
+(defn parse-guides [node]
+  (let [guides-node (get-data node :penpot:guides)]
+    (->> guides-node :content (map parse-guide-node) (into {}))))
+
 (defn extract-from-data
   ([node tag]
    (extract-from-data node tag identity))
@@ -554,20 +589,31 @@
 (defn remove-prefix [s]
   (cond-> s
     (string? s)
-    (str/replace (re-pattern (str uuid-regex "-")) "")))
+    (str/replace uuid-regex-prefix "")))
 
 (defn get-svg-attrs
-  [svg-data svg-attrs]
-  (let [assoc-key
+  [svg-import svg-data svg-attrs]
+  (let [process-attr
         (fn [acc prop]
-          (let [key (keyword prop)]
-            (if-let [v (or (get svg-data key)
-                           (get-in svg-data [:attrs key]))]
-              (assoc acc key (remove-prefix v))
-              acc)))]
+          (cond
+            (and (= prop "style")
+                 (contains? (:attrs svg-import) :penpot:svg-style))
+            (let [style (get-in svg-import [:attrs :penpot:svg-style])]
+              (assoc acc :style (parse-style style)))
 
+            (and (= prop "filter")
+                 (contains? (:attrs svg-import) :penpot:svg-filter))
+            (let [style (get-in svg-import [:attrs :penpot:svg-filter])]
+              (assoc acc :filter (parse-style style)))
+
+            :else
+            (let [key (keyword prop)]
+              (if-let [v (or (get svg-data key)
+                             (get-in svg-data [:attrs key]))]
+                (assoc acc key (remove-prefix v))
+                acc))))]
     (->> (str/split svg-attrs ",")
-         (reduce assoc-key {}))))
+         (reduce process-attr {}))))
 
 (defn get-svg-defs
   [node]
@@ -595,7 +641,7 @@
 
         (cond-> props
           :true
-          (assoc :svg-attrs (get-svg-attrs svg-data svg-attrs))
+          (assoc :svg-attrs (get-svg-attrs svg-import svg-data svg-attrs))
 
           (some? viewbox-x)
           (assoc :svg-viewbox {:x      (d/parse-double viewbox-x)
@@ -615,7 +661,8 @@
 (defn add-svg-content
   [props node]
   (let [svg-content (get-data node :penpot:svg-content)
-        attrs (-> (:attrs svg-content) (without-penpot-prefix))
+        attrs (-> (:attrs svg-content) (without-penpot-prefix)
+                  (d/update-when :style parse-style))
         tag (-> svg-content :attrs :penpot:tag keyword)
 
         node-content
@@ -623,13 +670,17 @@
           (= tag :svg)
           (->> node :content last :content last :content fix-style-attr)
 
-          (= tag :text)
-          (-> node :content last :content))]
-    (assoc
-     props :content
-     {:attrs   attrs
-      :tag     tag
-      :content node-content})))
+          (some? (:content svg-content))
+          (->> (:content svg-content)
+               (filter #(= :penpot:svg-child (:tag %)))
+               (mapv :content)
+               (first)))]
+    (-> props
+        (assoc
+         :content
+         {:attrs   attrs
+          :tag     tag
+          :content node-content}))))
 
 (defn add-frame-data [props node]
   (let [grids (parse-grids node)]
@@ -725,7 +776,9 @@
             (add-rect-data node svg-data))
 
           (cond-> (some? (get-in node [:attrs :penpot:media-id]))
-            (add-image-data type node))
+            (->
+             (add-rect-data node svg-data)
+             (add-image-data type node)))
 
           (cond-> (= :text type)
             (add-text-data node))
@@ -740,7 +793,8 @@
         grids      (->> (parse-grids node)
                         (group-by :type)
                         (d/mapm (fn [_ v] (-> v first :params))))
-        flows      (parse-flows node)]
+        flows      (parse-flows node)
+        guides     (parse-guides node)]
     (cond-> {}
       (some? background)
       (assoc-in [:options :background] background)
@@ -749,7 +803,10 @@
       (assoc-in [:options :saved-grids] grids)
 
       (d/not-empty? flows)
-      (assoc-in [:options :flows] flows))))
+      (assoc-in [:options :flows] flows)
+
+      (d/not-empty? guides)
+      (assoc-in [:options :guides] guides))))
 
 (defn parse-interactions
   [node]

@@ -8,8 +8,9 @@
   "Visually show shape interactions in workspace"
   (:require
    [app.common.data :as d]
-   [app.common.pages :as cp]
-   [app.common.types.interactions :as cti]
+   [app.common.geom.shapes :as gsh]
+   [app.common.pages.helpers :as cph]
+   [app.common.spec.interactions :as cti]
    [app.main.data.workspace :as dw]
    [app.main.refs :as refs]
    [app.main.store :as st]
@@ -209,7 +210,7 @@
           (st/emit! (dw/start-move-overlay-pos index)))]
 
     (when dest-shape
-      (let [orig-frame (cp/get-frame orig-shape objects)
+      (let [orig-frame (cph/get-frame objects orig-shape)
             marker-x   (+ (:x orig-frame) (:x position))
             marker-y   (+ (:y orig-frame) (:y position))
             width      (:width dest-shape)
@@ -235,18 +236,23 @@
                    :fill "var(--color-primary)"}]]))))
 
 (mf/defc interactions
-  [{:keys [selected hover-disabled?] :as props}]
-  (let [local (mf/deref refs/workspace-local)
-        zoom (mf/deref refs/selected-zoom)
-        current-transform (:transform local)
-        objects (mf/deref refs/workspace-page-objects)
-        active-shapes (filter #(seq (:interactions %)) (vals objects))
-        selected-shapes (map #(get objects %) selected)
-        editing-interaction-index (:editing-interaction-index local)
-        draw-interaction-to (:draw-interaction-to local)
-        draw-interaction-to-frame (:draw-interaction-to-frame local)
-        move-overlay-to (:move-overlay-to local)
-        move-overlay-index (:move-overlay-index local)
+  [{:keys [current-transform objects zoom selected hover-disabled?] :as props}]
+  (let [active-shapes (into []
+                            (comp (filter #(seq (:interactions %)))
+                                  (map gsh/transform-shape))
+                            (vals objects))
+
+        selected-shapes (into []
+                              (comp (map (d/getf objects))
+                                    (map gsh/transform-shape))
+                              selected)
+
+        {:keys [editing-interaction-index
+                draw-interaction-to
+                draw-interaction-to-frame
+                move-overlay-to
+                move-overlay-index]} (mf/deref refs/interactions-data)
+
         first-selected (first selected-shapes)
 
         calc-level (fn [index interactions]
@@ -320,7 +326,7 @@
                                           :objects objects
                                           :hover-disabled? hover-disabled?}]))])))
           (when (and shape
-                     (not (cp/unframed-shape? shape))
+                     (not (cph/unframed-shape? shape))
                      (not (#{:move :rotate} current-transform)))
             [:& interaction-handle {:key (:id shape)
                                     :index nil

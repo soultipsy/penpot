@@ -50,24 +50,35 @@
 (declare instrument-jdbc!)
 (declare apply-migrations!)
 
-(s/def ::name keyword?)
-(s/def ::uri ::us/not-empty-string)
-(s/def ::min-pool-size ::us/integer)
+(s/def ::connection-timeout ::us/integer)
 (s/def ::max-pool-size ::us/integer)
 (s/def ::migrations map?)
+(s/def ::min-pool-size ::us/integer)
+(s/def ::name keyword?)
+(s/def ::password ::us/string)
 (s/def ::read-only ::us/boolean)
+(s/def ::uri ::us/not-empty-string)
+(s/def ::username ::us/string)
+(s/def ::validation-timeout ::us/integer)
 
 (defmethod ig/pre-init-spec ::pool [_]
-  (s/keys :req-un [::uri ::name ::min-pool-size ::max-pool-size]
-          :opt-un [::migrations ::mtx/metrics ::read-only]))
+  (s/keys :req-un [::uri ::name ::username ::password]
+          :opt-un [::min-pool-size
+                   ::max-pool-size
+                   ::connection-timeout
+                   ::validation-timeout
+                   ::migrations
+                   ::mtx/metrics
+                   ::read-only]))
 
 (defmethod ig/init-key ::pool
-  [_ {:keys [migrations metrics name] :as cfg}]
+  [_ {:keys [migrations metrics name read-only] :as cfg}]
   (l/info :action "initialize connection pool" :name (d/name name) :uri (:uri cfg))
   (some-> metrics :registry instrument-jdbc!)
 
   (let [pool (create-pool cfg)]
-    (some->> (seq migrations) (apply-migrations! pool))
+    (when-not read-only
+      (some->> (seq migrations) (apply-migrations! pool)))
     pool))
 
 (defmethod ig/halt-key! ::pool
@@ -110,11 +121,11 @@
       (.setPoolName (d/name (:name cfg)))
       (.setAutoCommit true)
       (.setReadOnly read-only)
-      (.setConnectionTimeout 10000)  ;; 10seg
-      (.setValidationTimeout 10000)  ;; 10seg
+      (.setConnectionTimeout (:connection-timeout cfg 10000))  ;; 10seg
+      (.setValidationTimeout (:validation-timeout cfg 10000))  ;; 10seg
       (.setIdleTimeout 120000)       ;; 2min
       (.setMaxLifetime 1800000)      ;; 30min
-      (.setMinimumIdle (:min-pool-size cfg 0))
+      (.setMinimumIdle     (:min-pool-size cfg 0))
       (.setMaximumPoolSize (:max-pool-size cfg 50))
       (.setConnectionInitSql initsql)
       (.setInitializationFailTimeout -1))
@@ -136,9 +147,13 @@
 
 (s/def ::pool pool?)
 
-(defn pool-closed?
+(defn closed?
   [pool]
   (.isClosed ^HikariDataSource pool))
+
+(defn read-only?
+  [pool]
+  (.isReadOnly ^HikariDataSource pool))
 
 (defn create-pool
   [cfg]
@@ -358,7 +373,7 @@
         val (.getValue o)]
     (if (or (= typ "json")
             (= typ "jsonb"))
-      (json/decode-str val)
+      (json/read val)
       val)))
 
 (defn decode-transit-pgobject
@@ -394,7 +409,7 @@
   [data]
   (doto (org.postgresql.util.PGobject.)
     (.setType "jsonb")
-    (.setValue (json/encode-str data))))
+    (.setValue (json/write-str data))))
 
 ;; --- Locks
 

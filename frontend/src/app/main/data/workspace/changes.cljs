@@ -9,8 +9,8 @@
    [app.common.data :as d]
    [app.common.logging :as log]
    [app.common.pages :as cp]
-   [app.common.pages.spec :as spec]
    [app.common.spec :as us]
+   [app.common.spec.change :as spec.change]
    [app.main.data.workspace.state-helpers :as wsh]
    [app.main.data.workspace.undo :as dwu]
    [app.main.store :as st]
@@ -120,16 +120,13 @@
   (log/debug :msg "commit-changes"
              :js/redo-changes redo-changes
              :js/undo-changes undo-changes)
-  (let [error  (volatile! nil)
-        strace (.-stack (ex-info "" {}))]
-
+  (let [error  (volatile! nil)]
     (ptk/reify ::commit-changes
       cljs.core/IDeref
       (-deref [_]
         {:file-id file-id
          :hint-events @st/last-events
          :hint-origin (ptk/type origin)
-         :hint-strace strace
          :changes redo-changes})
 
       ptk/UpdateEvent
@@ -140,8 +137,8 @@
                                 [:workspace-data]
                                 [:workspace-libraries file-id :data])]
           (try
-            (us/assert ::spec/changes redo-changes)
-            (us/assert ::spec/changes undo-changes)
+            (us/assert ::spec.change/changes redo-changes)
+            (us/assert ::spec.change/changes undo-changes)
 
             ;; (prn "====== commit-changes ======" path)
             ;; (cljs.pprint/pprint redo-changes)

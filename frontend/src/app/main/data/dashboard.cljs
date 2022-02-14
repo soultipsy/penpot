@@ -61,6 +61,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (declare fetch-projects)
+(declare fetch-team-members)
 
 (defn initialize
   [{:keys [id] :as params}]
@@ -85,6 +86,7 @@
       (rx/merge
        (ptk/watch (df/load-team-fonts id) state stream)
        (ptk/watch (fetch-projects) state stream)
+       (ptk/watch (fetch-team-members) state stream)
        (ptk/watch (du/fetch-teams) state stream)
        (ptk/watch (du/fetch-users {:team-id id}) state stream)))))
 
@@ -833,3 +835,14 @@
         
         (->> (rp/mutation! action-name params)
              (rx/map action))))))
+
+(defn open-selected-file
+  []
+  (ptk/reify ::open-selected-file
+    ptk/WatchEvent
+    (watch [_ state _]
+      (let [files (get-in state [:dashboard-local :selected-files])]
+        (if (= 1 (count files))
+          (let [file (get-in state [:dashboard-files (first files)])]
+            (rx/of (go-to-workspace file)))
+          (rx/empty))))))

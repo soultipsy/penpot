@@ -11,11 +11,13 @@
    [app.main.data.workspace.colors :as mdc]
    [app.main.data.workspace.common :as dwc]
    [app.main.data.workspace.drawing :as dwd]
+   [app.main.data.workspace.layers :as dwly]
    [app.main.data.workspace.libraries :as dwl]
    [app.main.data.workspace.texts :as dwtxt]
    [app.main.data.workspace.transforms :as dwt]
    [app.main.data.workspace.undo :as dwu]
    [app.main.store :as st]
+   [app.main.ui.hooks.resize :as r]
    [app.util.dom :as dom]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -24,7 +26,7 @@
 
 ;; Shortcuts format https://github.com/ccampbell/mousetrap
 
-(def shortcuts
+(def base-shortcuts
   {:toggle-layers     {:tooltip (ds/alt "L")
                        :command (ds/a-mod "l")
                        :fn #(st/emit! (dw/go-to-layout :layers))}
@@ -37,9 +39,17 @@
                        :command (ds/a-mod "h")
                        :fn #(st/emit! (dw/go-to-layout :document-history))}
 
-   :toggle-palette    {:tooltip (ds/alt "P")
-                       :command (ds/a-mod "p")
-                       :fn #(st/emit! (dw/toggle-layout-flags :colorpalette))}
+   :toggle-colorpalette {:tooltip (ds/alt "P")
+                         :command (ds/a-mod "p")
+                         :fn #(do (r/set-resize-type! :bottom)
+                                  (st/emit! (dw/remove-layout-flags :textpalette)
+                                            (dw/toggle-layout-flags :colorpalette)))}
+
+   :toggle-textpalette  {:tooltip (ds/alt "T")
+                         :command (ds/a-mod "t")
+                         :fn #(do (r/set-resize-type! :bottom)
+                                  (st/emit! (dw/remove-layout-flags :colorpalette)
+                                            (dw/toggle-layout-flags :textpalette)))}
 
    :toggle-rules      {:tooltip (ds/meta-shift "R")
                        :command (ds/c-mod "shift+r")
@@ -57,6 +67,10 @@
                        :command (ds/c-mod "shift+'")
                        :fn #(st/emit! (dw/toggle-layout-flags :snap-grid))}
 
+   :toggle-snap-guide {:tooltip (ds/meta-shift "G")
+                       :command (ds/c-mod "shift+G")
+                       :fn #(st/emit! (dw/toggle-layout-flags :snap-guides))}
+
    :toggle-alignment  {:tooltip (ds/meta "\\")
                        :command (ds/c-mod "\\")
                        :fn #(st/emit! (dw/toggle-layout-flags :dynamic-alignment))}
@@ -66,7 +80,7 @@
                        :fn #(st/emit! (dw/toggle-layout-flags :scale-text))}
 
    :increase-zoom      {:tooltip "+"
-                        :command "+"
+                        :command ["+" "="]
                         :fn #(st/emit! (dw/increase-zoom nil))}
 
    :decrease-zoom      {:tooltip "-"
@@ -136,6 +150,10 @@
    :draw-frame         {:tooltip "A"
                         :command "a"
                         :fn #(st/emit! (dwd/select-for-drawing :frame))}
+
+   :move               {:tooltip "V"
+                        :command "v"
+                        :fn #(st/emit! :interrupt)}
 
    :draw-rect          {:tooltip "R"
                         :command "r"
@@ -269,19 +287,19 @@
                         :type "keyup"
                         :fn #(st/emit! (dw/toggle-distances-display false))}
 
-   :boolean-union      {:tooltip (ds/meta (ds/alt "U"))
+   :bool-union         {:tooltip (ds/meta (ds/alt "U"))
                         :command (ds/c-mod "alt+u")
                         :fn #(st/emit! (dw/create-bool :union))}
 
-   :boolean-difference {:tooltip (ds/meta (ds/alt "D"))
+   :bool-difference    {:tooltip (ds/meta (ds/alt "D"))
                         :command (ds/c-mod "alt+d")
                         :fn #(st/emit! (dw/create-bool :difference))}
 
-   :boolean-intersection {:tooltip (ds/meta (ds/alt "I"))
+   :bool-intersection    {:tooltip (ds/meta (ds/alt "I"))
                           :command (ds/c-mod "alt+i")
                           :fn #(st/emit! (dw/create-bool :intersection))}
 
-   :boolean-exclude      {:tooltip (ds/meta (ds/alt "E"))
+   :bool-exclude         {:tooltip (ds/meta (ds/alt "E"))
                           :command (ds/c-mod "alt+e")
                           :fn #(st/emit! (dw/create-bool :exclude))}
 
@@ -327,7 +345,28 @@
 
    :toggle-lock-size     {:tooltip (ds/meta (ds/alt "L"))
                           :command (ds/c-mod "alt+l")
-                          :fn #(st/emit! (dw/toggle-proportion-lock))}})
+                          :fn #(st/emit! (dw/toggle-proportion-lock))}
+
+   :create-artboard-from-selection {:tooltip (ds/meta (ds/alt "G"))
+                                    :command (ds/c-mod "alt+g")
+                                    :fn #(st/emit! (dw/create-artboard-from-selection))}
+
+   :hide-ui {:tooltip "\\"
+             :command "\\"
+             :fn #(st/emit! (dw/toggle-layout-flags :hide-ui))}
+
+   })
+
+(def opacity-shortcuts
+  (into {} (->>
+            (range 10)
+            (map (fn [n] [(keyword (str "opacity-" n))
+                          {:tooltip (str n)
+                           :command (str n)
+                           :fn #(st/emit! (dwly/pressed-opacity n))}])))))
+
+(def shortcuts
+  (merge base-shortcuts opacity-shortcuts))
 
 (defn get-tooltip [shortcut]
   (assert (contains? shortcuts shortcut) (str shortcut))

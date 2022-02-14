@@ -145,7 +145,8 @@
             (rx/mapcat (fn [profile]
                          (if (= uuid/zero (:id profile))
                            (rx/empty)
-                           (rx/of (fetch-teams))))))))))
+                           (rx/of (fetch-teams)))))
+            (rx/observe-on :async))))))
 
 ;; --- EVENT: login
 
@@ -155,13 +156,8 @@
   accepting invitation, or third party auth signup or singin."
   [profile]
   (letfn [(get-redirect-event []
-            (if-let [{:keys [data path-params query-params]} (::redirect-to @storage)]
-              (do
-                (swap! storage dissoc ::redirect-to)
-                (rt/nav' (:name data) path-params query-params))
-              (let [team-id (:default-team-id profile)]
-                (rt/nav' :dashboard-projects {:team-id team-id}))))]
-
+            (let [team-id (:default-team-id profile)]
+              (rt/nav' :dashboard-projects {:team-id team-id})))]
     (ptk/reify ::logged-in
       IDeref
       (-deref [_] profile)
@@ -254,17 +250,13 @@
                       (with-meta profile
                         {::ev/source "register"})))
             (rx/map logged-in)
-            (rx/observe-on :async))))
-
-    ptk/EffectEvent
-    (effect [_ _ _]
-      (swap! storage dissoc ::redirect-to))))
+            (rx/observe-on :async))))))
 
 ;; --- EVENT: logout
 
 (defn logged-out
   ([] (logged-out {}))
-  ([{:keys [capture-redirect?] :or {capture-redirect? false}}]
+  ([_params]
    (ptk/reify ::logged-out
      ptk/UpdateEvent
      (update [_ state]
@@ -278,10 +270,8 @@
             (rx/observe-on :async)))
 
      ptk/EffectEvent
-     (effect [_ state _]
-       (when capture-redirect?
-         (let [route (into {} (:route state))]
-           (reset! storage {::redirect-to route})))
+     (effect [_ _ _]
+       (reset! storage {})
        (i18n/reset-locale)))))
 
 (defn logout
@@ -391,7 +381,6 @@
                          (rx/empty)))
              (rx/ignore))))))
 
-
 (defn mark-onboarding-as-viewed
   ([] (mark-onboarding-as-viewed nil))
   ([{:keys [version]}]
@@ -457,6 +446,20 @@
       (watch [_ _ _]
         (->> (rp/query :team-users {:team-id team-id})
              (rx/map #(partial fetched %)))))))
+
+;; --- Update Nudge
+
+(defn update-nudge
+  [value]
+  (ptk/reify ::update-nudge
+    ptk/UpdateEvent
+    (update [_ state]
+      (update-in state [:profile :props] assoc :nudge value))
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (let [props {:nudge value}]
+        (->> (rp/mutation :update-profile-props {:props props})
+             (rx/map (constantly (fetch-profile))))))))
 
 ;; --- EVENT: request-account-deletion
 

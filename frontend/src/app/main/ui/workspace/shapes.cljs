@@ -12,10 +12,7 @@
   others are defined using a generic wrapper implemented in
   common."
   (:require
-   [app.common.geom.shapes :as geom]
-   [app.common.pages :as cp]
-   [app.common.uuid :as uuid]
-   [app.main.refs :as refs]
+   [app.common.pages.helpers :as cph]
    [app.main.ui.shapes.circle :as circle]
    [app.main.ui.shapes.image :as image]
    [app.main.ui.shapes.rect :as rect]
@@ -30,7 +27,6 @@
    [app.main.ui.workspace.shapes.text :as text]
    [app.util.object :as obj]
    [debug :refer [debug?]]
-   [okulary.core :as l]
    [rumext.alpha :as mf]))
 
 (declare shape-wrapper)
@@ -43,31 +39,23 @@
 (def image-wrapper (common/generic-wrapper-factory image/image-shape))
 (def rect-wrapper (common/generic-wrapper-factory rect/rect-shape))
 
-(defn make-is-moving-ref
-  [id]
-  (fn []
-    (let [check-moving (fn [local]
-                         (and (= :move (:transform local))
-                              (contains? (:selected local) id)))]
-      (l/derived check-moving refs/workspace-local))))
-
 (mf/defc root-shape
   "Draws the root shape of the viewport and recursively all the shapes"
   {::mf/wrap-props false}
   [props]
   (let [objects       (obj/get props "objects")
         active-frames (obj/get props "active-frames")
-        root-shapes   (get-in objects [uuid/zero :shapes])
-        shapes        (->> root-shapes (mapv #(get objects %)))
-
-        root-children (->> shapes
-                           (filter #(not= :frame (:type %)))
-                           (mapcat #(cp/get-object-with-children (:id %) objects)))]
-
+        shapes        (cph/get-immediate-children objects)]
     [:*
-     [:& ff/fontfaces-style {:shapes root-children}]
+     ;; Render font faces only for shapes that are part of the root
+     ;; frame but don't belongs to any other frame.
+     (let [xform (comp
+                  (remove cph/frame-shape?)
+                  (mapcat #(cph/get-children-with-self objects (:id %))))]
+       [:& ff/fontfaces-style {:shapes (into [] xform shapes)}])
+
      (for [item shapes]
-       (if (= (:type item) :frame)
+       (if (cph/frame-shape? item)
          [:& frame-wrapper {:shape item
                             :key (:id item)
                             :objects objects
@@ -77,20 +65,16 @@
                             :key (:id item)}]))]))
 
 (mf/defc shape-wrapper
-  {::mf/wrap [#(mf/memo' % (mf/check-props ["shape" "frame"]))]
+  {::mf/wrap [#(mf/memo' % (mf/check-props ["shape"]))]
    ::mf/wrap-props false}
   [props]
   (let [shape  (obj/get props "shape")
-        frame  (obj/get props "frame")
-        shape  (-> (geom/transform-shape shape {:round-coords? false})
-                   (geom/translate-to-frame frame))
-        opts  #js {:shape shape
-                   :frame frame}
+        opts  #js {:shape shape}
 
         svg-element? (and (= (:type shape) :svg-raw)
                           (not= :svg (get-in shape [:content :tag])))]
 
-    (when (and shape (not (:hidden shape)))
+    (when (and (some? shape) (not (:hidden shape)))
       [:*
        (if-not svg-element?
          (case (:type shape)
@@ -104,7 +88,7 @@
            :bool    [:> bool-wrapper opts]
 
            ;; Only used when drawing a new frame.
-           :frame [:> frame-wrapper {:shape shape}]
+           :frame [:> frame-wrapper opts]
 
            nil)
 
@@ -112,7 +96,7 @@
          [:> svg-raw-wrapper opts])
 
        (when (debug? :bounding-boxes)
-         [:& bounding-box {:shape shape :frame frame}])])))
+         [:> bounding-box opts])])))
 
 (def group-wrapper (group/group-wrapper-factory shape-wrapper))
 (def svg-raw-wrapper (svg-raw/svg-raw-wrapper-factory shape-wrapper))

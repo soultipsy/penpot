@@ -35,7 +35,8 @@
   {:frame-id uuid/zero
    :fill-color clr/white
    :fill-opacity 1
-   :shapes []})
+   :shapes []
+   :hide-fill-on-export false})
 
 (def ^:private minimal-shapes
   [{:type :rect
@@ -50,7 +51,9 @@
     :rx 0
     :ry 0}
 
-   {:type :image}
+   {:type :image
+    :rx 0
+    :ry 0}
 
    {:type :circle
     :name "Circle-1"

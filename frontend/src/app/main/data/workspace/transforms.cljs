@@ -12,10 +12,11 @@
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
    [app.common.math :as mth]
-   [app.common.pages :as cp]
+   [app.common.pages.helpers :as cph]
    [app.common.spec :as us]
    [app.main.data.workspace.changes :as dch]
    [app.main.data.workspace.common :as dwc]
+   [app.main.data.workspace.guides :as dwg]
    [app.main.data.workspace.selection :as dws]
    [app.main.data.workspace.state-helpers :as wsh]
    [app.main.data.workspace.undo :as dwu]
@@ -106,9 +107,9 @@
 ;; apply-modifiers event is done, that consolidates all modifiers into the base
 ;; geometric attributes of the shapes.
 
-(declare set-modifiers-recursive)
-(declare set-local-displacement)
 (declare clear-local-transform)
+(declare set-modifiers-recursive)
+(declare get-ignore-tree)
 
 (defn- set-modifiers
   ([ids] (set-modifiers ids nil false))
@@ -119,21 +120,17 @@
      ptk/UpdateEvent
      (update [_ state]
        (let [modifiers (or modifiers (get-in state [:workspace-local :modifiers] {}))
-             page-id (:current-page-id state)
-             objects (wsh/lookup-page-objects state page-id)
-             ids     (into #{} (remove #(get-in objects [% :blocked] false)) ids)]
+             page-id   (:current-page-id state)
+             objects   (wsh/lookup-page-objects state page-id)
+             ids       (into #{} (remove #(get-in objects [% :blocked] false)) ids)
 
-         (reduce (fn [state id]
-                     (update state :workspace-modifiers
-                             #(set-modifiers-recursive %
-                                                       objects
-                                                       (get objects id)
-                                                       modifiers
-                                                       nil
-                                                       nil
-                                                       ignore-constraints)))
-                 state
-                 ids))))))
+             setup-modifiers
+             (fn [state id]
+               (let [shape (get objects id)]
+                 (update state :workspace-modifiers
+                         #(set-modifiers-recursive % objects shape modifiers ignore-constraints))))]
+
+         (reduce setup-modifiers state ids))))))
 
 ;; Rotation use different algorithm to calculate children modifiers (and do not use child constraints).
 (defn- set-rotation-modifiers
@@ -147,9 +144,7 @@
        (let [objects (wsh/lookup-page-objects state)
              shapes  (->> shapes
                           (remove #(get % :blocked false))
-                          (mapcat (fn [shape]
-                                    (->> (cp/get-children (:id shape) objects)
-                                         (map #(get objects %)))))
+                          (mapcat #(cph/get-children objects (:id %)))
                           (concat shapes))
 
              update-shape
@@ -166,18 +161,17 @@
     ptk/WatchEvent
     (watch [_ state _]
       (let [objects           (wsh/lookup-page-objects state)
-            children-ids      (->> ids (mapcat #(cp/get-children % objects)))
-            ids-with-children (d/concat-vec children-ids ids)
+            ids-with-children (into (vec ids) (mapcat #(cph/get-children-ids objects %)) ids)
             object-modifiers  (get state :workspace-modifiers)
-            ignore-tree       (d/mapm #(get-in %2 [:modifiers :ignore-geometry?]) object-modifiers)]
+            ignore-tree       (get-ignore-tree object-modifiers objects ids)]
 
         (rx/of (dwu/start-undo-transaction)
+               (dwg/move-frame-guides ids-with-children)
                (dch/update-shapes
                  ids-with-children
                  (fn [shape]
-                   (-> shape
-                       (merge (get object-modifiers (:id shape)))
-                       (gsh/transform-shape)))
+                   (let [modif (get object-modifiers (:id shape))]
+                     (gsh/transform-shape (merge shape modif))))
                  {:reg-objects? true
                   :ignore-tree ignore-tree
                   ;; Attributes that can change in the transform. This way we don't have to check
@@ -198,62 +192,51 @@
   "If the shape is a component instance, check its relative position respect the
   root of the component, and see if it changes after applying a transformation."
   [shape root transformed-shape transformed-root objects]
-  (let [root (cond
-               (:component-root? shape)
-               shape
+  (let [root
+        (cond
+          (:component-root? shape)
+          shape
 
-               (nil? root)
-               (cp/get-root-shape shape objects)
+          (nil? root)
+          (cph/get-root-shape objects shape)
 
-               :else root)
+          :else root)
 
-        transformed-root (cond
-                           (:component-root? transformed-shape)
-                           transformed-shape
+        transformed-root
+        (cond
+          (:component-root? transformed-shape)
+          transformed-shape
 
-                           (nil? transformed-root)
-                           (cp/get-root-shape transformed-shape objects)
+          (nil? transformed-root)
+          (cph/get-root-shape objects transformed-shape)
 
-                           :else transformed-root)
+          :else transformed-root)
 
-        shape-delta (when root
-                      (gpt/point (- (:x shape) (:x root))
-                                 (- (:y shape) (:y root))))
+        shape-delta
+        (when root
+          (gpt/point (- (:x shape) (:x root))
+                     (- (:y shape) (:y root))))
 
-        transformed-shape-delta (when transformed-root
-                                  (gpt/point (- (:x transformed-shape) (:x transformed-root))
-                                             (- (:y transformed-shape) (:y transformed-root))))
+        transformed-shape-delta
+        (when transformed-root
+          (gpt/point (- (:x transformed-shape) (:x transformed-root))
+                     (- (:y transformed-shape) (:y transformed-root))))
 
         ignore-geometry? (= shape-delta transformed-shape-delta)]
 
     [root transformed-root ignore-geometry?]))
 
 (defn- set-modifiers-recursive
-  [modif-tree objects shape modifiers root transformed-root ignore-constraints]
+  [modif-tree objects shape modifiers ignore-constraints]
   (let [children (map (d/getf objects) (:shapes shape))
-
-        transformed-shape (gsh/transform-shape (assoc shape :modifiers modifiers))
-
-        [root transformed-root ignore-geometry?]
-        (check-delta shape root transformed-shape transformed-root objects)
-
-        modifiers (assoc modifiers :ignore-geometry? ignore-geometry?)
-
-        transformed-rect (gsh/calc-transformed-parent-rect shape modifiers)
+        transformed-rect (gsh/transform-selrect (:selrect shape) modifiers)
 
         set-child
         (fn [modif-tree child]
-          (let [child-modifiers
-                (gsh/calc-child-modifiers shape child modifiers ignore-constraints transformed-rect)]
-
+          (let [child-modifiers (gsh/calc-child-modifiers shape child modifiers ignore-constraints transformed-rect)]
             (cond-> modif-tree
-              (d/not-empty? (d/without-keys child-modifiers [:ignore-geometry?]))
-              (set-modifiers-recursive objects
-                                       child
-                                       child-modifiers
-                                       root
-                                       transformed-root
-                                       ignore-constraints))))
+              (not (gsh/empty-modifiers? child-modifiers))
+              (set-modifiers-recursive objects child child-modifiers ignore-constraints))))
 
         modif-tree
         (-> modif-tree
@@ -261,13 +244,27 @@
 
     (reduce set-child modif-tree children)))
 
-(defn- set-local-displacement [point]
-  (ptk/reify ::start-local-displacement
-    ptk/UpdateEvent
-    (update [_ state]
-      (let [mtx (gmt/translate-matrix point)]
-        (-> state
-            (assoc-in [:workspace-local :modifiers] {:displacement mtx}))))))
+(defn- get-ignore-tree
+  "Retrieves a map with the flag `ignore-tree` given a tree of modifiers"
+  ([modif-tree objects shape]
+   (get-ignore-tree modif-tree objects shape nil nil {}))
+
+  ([modif-tree objects shape root transformed-root ignore-tree]
+   (let [children (map (d/getf objects) (:shapes shape))
+
+         shape-id (:id shape)
+         transformed-shape (gsh/transform-shape (merge shape (get modif-tree shape-id)))
+
+         [root transformed-root ignore-geometry?]
+         (check-delta shape root transformed-shape transformed-root objects)
+
+         ignore-tree (assoc ignore-tree shape-id ignore-geometry?)
+
+         set-child
+         (fn [modif-tree child]
+           (get-ignore-tree modif-tree objects child root transformed-root ignore-tree))]
+
+     (reduce set-child ignore-tree children))))
 
 (defn- clear-local-transform []
   (ptk/reify ::clear-local-transform
@@ -275,7 +272,7 @@
     (update [_ state]
       (-> state
           (dissoc :workspace-modifiers)
-          (update :workspace-local dissoc :modifiers :current-move-selected)))))
+          (update :workspace-local dissoc :current-move-selected)))))
 
 
 ;; -- Resize --------------------------------------------------------
@@ -370,7 +367,7 @@
             (assoc-in [:workspace-local :transform] :resize)))
 
       ptk/WatchEvent
-      (watch [it state stream]
+      (watch [_ state stream]
         (let [initial-position @ms/mouse-position
               stoper  (rx/filter ms/mouse-up? stream)
               layout  (:workspace-layout state)
@@ -410,26 +407,13 @@
                   (let [shape (get objects id)
                         modifiers (gsh/resize-modifiers shape attr value)]
                     (update state :workspace-modifiers
-                            #(set-modifiers-recursive %
-                                                      objects
-                                                      shape
-                                                      modifiers
-                                                      nil
-                                                      nil
-                                                      false))))
+                            #(set-modifiers-recursive % objects shape modifiers false))))
                 state
                 ids)))
 
     ptk/WatchEvent
-    (watch [_ state _]
-      (let [page-id (:current-page-id state)
-            objects (wsh/lookup-page-objects state page-id)
-
-            ;; TODO: looks completly redundant operation because
-            ;; apply-modifiers already finds all children.
-            ids     (d/concat-vec ids (mapcat #(cp/get-children % objects) ids))]
-        (rx/of (apply-modifiers ids))))))
-
+    (watch [_ _ _]
+      (rx/of (apply-modifiers ids)))))
 
 ;; -- Rotate --------------------------------------------------------
 
@@ -448,24 +432,25 @@
             group           (gsh/selection-rect shapes)
             group-center    (gsh/center-selrect group)
             initial-angle   (gpt/angle @ms/mouse-position group-center)
-            calculate-angle (fn [pos ctrl?]
+            calculate-angle (fn [pos ctrl? shift?]
                               (let [angle (- (gpt/angle pos group-center) initial-angle)
                                     angle (if (neg? angle) (+ 360 angle) angle)
-                                    modval (mod angle 45)
-                                    angle (if ctrl?
-                                            (if (< 22.5 modval)
-                                              (+ angle (- 45 modval))
-                                              (- angle modval))
-                                            angle)
                                     angle (if (= angle 360)
                                             0
+                                            angle)
+                                    angle (if ctrl?
+                                            (* (mth/floor (/ angle 45)) 45)
+                                            angle)
+                                    angle (if shift?
+                                            (* (mth/floor (/ angle 15)) 15)
                                             angle)]
                                 angle))]
         (rx/concat
          (->> ms/mouse-position
               (rx/with-latest vector ms/mouse-position-ctrl)
-              (rx/map (fn [[pos ctrl?]]
-                        (let [delta-angle (calculate-angle pos ctrl?)]
+              (rx/with-latest vector ms/mouse-position-shift)
+              (rx/map (fn [[[pos ctrl?] shift?]]
+                        (let [delta-angle (calculate-angle pos ctrl? shift?)]
                           (set-rotation-modifiers delta-angle shapes group-center))))
               (rx/take-until stoper))
          (rx/of (apply-modifiers (map :id shapes))
@@ -506,7 +491,6 @@
             stopper  (rx/filter ms/mouse-up? stream)]
         (when-not (empty? selected)
           (->> ms/mouse-position
-               (rx/take-until stopper)
                (rx/map #(gpt/to-vec initial %))
                (rx/map #(gpt/length %))
                (rx/filter #(> % 1))
@@ -519,16 +503,23 @@
                     (rx/of (start-move-duplicate initial)
                            (dws/duplicate-selected false))
                     ;; Otherwise just plain old move
-                    (rx/of (start-move initial selected)))))))))))
+                    (rx/of (start-move initial selected)))))
+               (rx/take-until stopper)))))))
+
 
 (defn- start-move-duplicate
   [from-position]
   (ptk/reify ::start-move-duplicate
+    ptk/UpdateEvent
+    (update [_ state]
+      (-> state
+          (assoc-in [:workspace-local :transform] :move)))
+
     ptk/WatchEvent
     (watch [_ _ stream]
       (->> stream
            (rx/filter (ptk/type? ::dws/duplicate-selected))
-           (rx/first)
+           (rx/take 1)
            (rx/map #(start-move from-position))))))
 
 (defn- start-move
@@ -560,7 +551,6 @@
                             delta)))
 
              position (->> ms/mouse-position
-                           (rx/take-until stopper)
                            (rx/with-latest-from ms/mouse-position-shift)
                            (rx/map #(fix-axis %)))
 
@@ -579,10 +569,11 @@
             (->> position
                  (rx/with-latest vector snap-delta)
                  (rx/map snap/correct-snap-point)
-                 (rx/map set-local-displacement))
+                 (rx/map #(hash-map :displacement (gmt/translate-matrix %)))
+                 (rx/map (partial set-modifiers ids))
+                 (rx/take-until stopper))
 
-            (rx/of (set-modifiers ids)
-                   (apply-modifiers ids)
+            (rx/of (apply-modifiers ids)
                    (calculate-frame-for-move ids)
                    (finish-transform)))))))))
 
@@ -611,13 +602,14 @@
       (watch [_ state stream]
         (if (= same-event (get-in state [:workspace-local :current-move-selected]))
           (let [selected (wsh/lookup-selected state {:omit-blocked? true})
+                nudge (get-in state [:profile :props :nudge] {:big 10 :small 1})
                 move-events (->> stream
                                  (rx/filter (ptk/type? ::move-selected))
                                  (rx/filter #(= direction (deref %))))
                 stopper (->> move-events
                              (rx/debounce 100)
-                             (rx/first))
-                scale (if shift? (gpt/point 10) (gpt/point 1))
+                             (rx/take 1))
+                scale (if shift? (gpt/point (:big nudge)) (gpt/point (:small nudge)))
                 mov-vec (gpt/multiply (get-displacement direction) scale)]
 
             (rx/concat
@@ -625,11 +617,11 @@
               (->> move-events
                    (rx/take-until stopper)
                    (rx/scan #(gpt/add %1 mov-vec) (gpt/point 0 0))
-                   (rx/map set-local-displacement))
+                   (rx/map #(hash-map :displacement (gmt/translate-matrix %)))
+                   (rx/map (partial set-modifiers selected)))
               (rx/of (move-selected direction shift?)))
 
-             (rx/of (set-modifiers selected)
-                    (apply-modifiers selected)
+             (rx/of (apply-modifiers selected)
                     (finish-transform))))
             (rx/empty))))))
 
@@ -667,10 +659,10 @@
       (let [position @ms/mouse-position
             page-id (:current-page-id state)
             objects (wsh/lookup-page-objects state page-id)
-            frame-id (cp/frame-id-by-position objects position)
+            frame-id (cph/frame-id-by-position objects position)
 
             moving-shapes (->> ids
-                               (cp/clean-loops objects)
+                               (cph/clean-loops objects)
                                (map #(get objects %))
                                (remove #(or (nil? %)
                                             (= (:frame-id %) frame-id))))
@@ -687,7 +679,7 @@
                              {:type :mov-objects
                               :page-id page-id
                               :parent-id (:parent-id shape)
-                              :index (cp/get-index-in-parent objects (:id shape))
+                              :index (cph/get-index-in-parent objects (:id shape))
                               :shapes [(:id shape)]})))]
 
         (when-not (empty? uch)
@@ -744,7 +736,3 @@
                                :displacement (gmt/translate-matrix (gpt/point 0 (- (:height selrect))))}
                               true)
                (apply-modifiers selected))))))
-
-
-;; -- Transform to path ---------------------------------------------
-

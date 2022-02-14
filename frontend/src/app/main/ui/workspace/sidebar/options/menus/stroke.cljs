@@ -8,12 +8,11 @@
   (:require
    [app.common.colors :as clr]
    [app.common.data :as d]
-   [app.common.math :as math]
-   [app.common.pages.spec :as spec]
    [app.main.data.workspace.changes :as dch]
    [app.main.data.workspace.colors :as dc]
    [app.main.store :as st]
    [app.main.ui.components.dropdown :refer [dropdown]]
+   [app.main.ui.components.numeric-input :refer [numeric-input]]
    [app.main.ui.icons :as i]
    [app.main.ui.workspace.sidebar.options.rows.color-row :refer [color-row]]
    [app.util.dom :as dom]
@@ -36,9 +35,7 @@
 (defn- width->string [width]
   (if (= width :multiple)
    ""
-   (str (-> width
-            (d/coalesce 1)
-            (math/round)))))
+   (str (or width 1))))
 
 (defn- enum->string [value]
   (if (= value :multiple)
@@ -123,16 +120,13 @@
               (st/emit! (dch/update-shapes ids #(assoc % :stroke-alignment value))))))
 
         on-stroke-width-change
-        (fn [event]
-          (let [value (-> (dom/get-target event)
-                          (dom/get-value)
-                          (d/parse-integer 0))]
-            (when-not (str/empty? value)
-              (st/emit! (dch/update-shapes ids #(assoc % :stroke-width value))))))
+        (fn [value]
+          (when-not (str/empty? value)
+            (st/emit! (dch/update-shapes ids #(assoc % :stroke-width value)))))
 
         update-cap-attr
         (fn [& kvs]
-          #(if (spec/has-caps? %)
+          #(if (= :path (:type %))
              (apply (partial assoc %) kvs)
              %))
 
@@ -208,11 +202,13 @@
          [:div.input-element
           {:class (dom/classnames :pixels (not= (:stroke-width values) :multiple))
            :title (tr "workspace.options.stroke-width")}
-          [:input.input-text {:type "number"
-                              :min "0"
-                              :value (-> (:stroke-width values) width->string)
-                              :placeholder (tr "settings.multiple")
-                              :on-change on-stroke-width-change}]]
+
+          [:> numeric-input
+           {:min 0
+            :value (-> (:stroke-width values) width->string)
+            :precision 2
+            :placeholder (tr "settings.multiple")
+            :on-change on-stroke-width-change}]]
 
          [:select#style.input-select {:value (enum->string (:stroke-alignment values))
                                       :on-change on-stroke-alignment-change}

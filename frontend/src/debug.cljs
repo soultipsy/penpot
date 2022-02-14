@@ -8,16 +8,49 @@
   (:require
    [app.common.data :as d]
    [app.common.math :as mth]
-   [app.common.pages :as cp]
+   [app.common.pages.helpers :as cph]
+   [app.common.transit :as t]
+   [app.common.uuid :as uuid]
+   [app.main.data.workspace :as dw]
+   [app.main.data.workspace.changes :as dwc]
    [app.main.store :as st]
    [app.util.object :as obj]
    [app.util.timers :as timers]
    [beicon.core :as rx]
    [cljs.pprint :refer [pprint]]
    [cuerdas.core :as str]
-   [potok.core :as ptk]))
+   [potok.core :as ptk]
+   [promesa.core :as p]))
 
-(def debug-options #{:bounding-boxes :group :events :rotation-handler :resize-handler :selection-center :export :import #_:simple-selection})
+(def debug-options
+  #{;; Displays the bounding box for the shapes
+    :bounding-boxes
+
+    ;; Displays an overlay over the groups
+    :group
+
+    ;; Displays in the console log the events through the application
+    :events
+
+    ;; Display the boxes that represent the rotation handlers
+    :rotation-handler
+
+    ;; Display the boxes that represent the resize handlers
+    :resize-handler
+
+    ;; Displays the center of a selection
+    :selection-center
+
+    ;; When active the single selection will not take into account previous transformations
+    ;; this is useful to debug transforms
+    :simple-selection
+
+    ;; When active the thumbnails will be displayed with a sepia filter
+    :thumbnails
+
+    ;; When active we can check in the browser the export values
+    :show-export-metadata
+    })
 
 ;; These events are excluded when we activate the :events flag
 (def debug-exclude-events
@@ -106,27 +139,40 @@
     (do-thing)))
 
 (defn ^:export dump-state []
-  (logjs "state" @st/state))
+  (logjs "state" @st/state)
+  nil)
 
 (defn ^:export dump-buffer []
-  (logjs "state" @st/last-events))
+  (logjs "state" @st/last-events)
+  nil)
 
 (defn ^:export get-state [str-path]
   (let [path (->> (str/split str-path " ")
                   (map d/read-string))]
-    (clj->js (get-in @st/state path))))
+    (clj->js (get-in @st/state path)))
+  nil)
 
 (defn ^:export dump-objects []
-  (let [page-id (get @st/state :current-page-id)]
-    (logjs "state" (get-in @st/state [:workspace-data :pages-index page-id :objects]))))
+  (let [page-id (get @st/state :current-page-id)
+        objects (get-in @st/state [:workspace-data :pages-index page-id :objects])]
+    (logjs "objects" objects)
+    nil))
 
 (defn ^:export dump-object [name]
   (let [page-id (get @st/state :current-page-id)
         objects (get-in @st/state [:workspace-data :pages-index page-id :objects])
-        target  (or (d/seek (fn [[_ shape]] (= name (:name shape))) objects)
-                    (get objects (uuid name)))]
-    (->> target
-         (logjs "state"))))
+        result  (or (d/seek (fn [[_ shape]] (= name (:name shape))) objects)
+                    (get objects (uuid/uuid name)))]
+    (logjs name result)
+    nil))
+
+(defn ^:export dump-selected []
+  (let [page-id (get @st/state :current-page-id)
+        objects (get-in @st/state [:workspace-data :pages-index page-id :objects])
+        selected (get-in @st/state [:workspace-local :selected])
+        result (->> selected (map (d/getf objects)))]
+    (logjs "selected" result)
+    nil))
 
 (defn ^:export dump-tree
   ([] (dump-tree false false))
@@ -162,7 +208,7 @@
              (show-component [shape objects]
                (if (nil? (:shape-ref shape))
                  ""
-                 (let [root-shape        (cp/get-component-shape shape objects)
+                 (let [root-shape        (cph/get-component-shape objects shape)
                        component-id      (when root-shape (:component-id root-shape))
                        component-file-id (when root-shape (:component-file root-shape))
                        component-file    (when component-file-id (get libraries component-file-id nil))
@@ -209,3 +255,31 @@
                                  (not (debug-exclude-events (ptk/type s))))))
          (rx/subs #(println "[stream]: " (ptk/repr-event %))))))
 
+(defn ^:export apply-changes
+  "Takes a Transit JSON changes"
+  [^string changes*]
+
+  (let [file-id (:current-file-id @st/state)
+        changes (t/decode-str changes*)]
+    (st/emit! (dwc/commit-changes {:redo-changes changes
+                                   :undo-changes []
+                                   :save-undo? true
+                                   :file-id file-id}))))
+
+(defn ^:export fetch-apply
+  [^string url]
+  (-> (p/let [response (js/fetch url)]
+        (.text response))
+      (p/then apply-changes)))
+
+(defn ^:export reset-viewport
+  []
+  (st/emit!
+   dw/reset-zoom
+   (dw/update-viewport-position {:x (constantly 0) :y (constantly 0)})))
+
+
+(defn ^:export hide-ui
+  []
+  (st/emit!
+   (dw/toggle-layout-flags :hide-ui)))

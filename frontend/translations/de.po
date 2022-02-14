@@ -1767,7 +1767,7 @@ msgstr "Seite bearbeiten"
 msgid "viewer.header.fullscreen"
 msgstr "Vollbildmodus"
 
-msgid "viewer.header.handsoff-section"
+msgid "viewer.header.handoff-section"
 msgstr "Übergabe (%s)"
 
 #: src/app/main/ui/viewer/header.cljs
@@ -3032,7 +3032,7 @@ msgstr "Verlauf (%s)"
 
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.sidebar.layers"
-msgstr "Ebenen (%s)"
+msgstr "Ebenen"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/svg_attrs.cljs, src/app/main/ui/handoff/attributes/svg.cljs
 msgid "workspace.sidebar.options.svg-attrs.title"
@@ -3048,7 +3048,7 @@ msgstr "Sitemap"
 
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.toolbar.assets"
-msgstr "Assets (%s)"
+msgstr "Assets"
 
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.toolbar.color-palette"
@@ -3076,7 +3076,7 @@ msgstr "Bild (%s)"
 
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.toolbar.move"
-msgstr "Verschieben"
+msgstr "Verschieben (%s)"
 
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.toolbar.path"

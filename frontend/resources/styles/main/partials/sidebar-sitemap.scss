@@ -5,11 +5,10 @@
 // Copyright (c) 2015-2016 Andrey Antukh <niwi@niwi.nz>
 // Copyright (c) 2015-2016 Juan de la Cruz <delacruzgarciajuan@gmail.com>
 
-.sitemap {
-  flex: none !important;
+#sitemap {
+  height: var(--height, 200px);
 
   .element-list {
-
     li {
       align-items: center;
       display: flex;
@@ -17,14 +16,12 @@
       width: 100%;
 
       .page-icon {
-
         svg {
           fill: $color-gray-30;
           height: 13px;
           margin-right: $size-1;
           width: 13px;
         }
-
       }
 
       span {
@@ -42,23 +39,19 @@
         margin-left: auto;
 
         a {
-
           svg {
             fill: $color-gray-60;
             height: 15px;
             margin-left: $size-1;
             width: 15px;
           }
-
         }
-
       }
 
       &:hover {
         background-color: $color-primary;
 
         .page-icon {
-
           svg {
             fill: $color-gray-60;
           }
@@ -66,35 +59,27 @@
           span {
             color: $color-gray-60;
           }
-
         }
 
         .page-actions {
           display: flex;
         }
-
       }
 
       &.selected {
-
         .page-icon {
-
           svg {
             fill: $color-primary;
           }
-
         }
 
         span {
           color: $color-primary;
         }
-
       }
 
       &:hover {
-
         .page-icon {
-
           svg {
             fill: $color-gray-60;
           }
@@ -104,7 +89,6 @@
           color: $color-gray-60;
         }
       }
-
     }
 
     .element-list-body {
@@ -133,6 +117,15 @@
         background-color: $color-gray-10;
       }
     }
+  }
+
+  & .resize-area {
+    position: absolute;
+    width: 100%;
+    height: 16px;
+    bottom: -8px;
+    left: 0;
+    cursor: ns-resize;
   }
 }
 

@@ -6,13 +6,15 @@
 
 (ns app.main.ui.workspace.viewport.pixel-overlay
   (:require
+   [app.common.data :as d]
    [app.common.uuid :as uuid]
    [app.main.data.modal :as modal]
    [app.main.data.workspace.colors :as dwc]
+   [app.main.data.workspace.undo :as dwu]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.cursors :as cur]
-   [app.main.ui.workspace.shapes :refer [shape-wrapper frame-wrapper]]
+   [app.main.ui.workspace.shapes :as shapes]
    [app.util.dom :as dom]
    [app.util.keyboard :as kbd]
    [app.util.object :as obj]
@@ -24,7 +26,7 @@
   (:import goog.events.EventType))
 
 (defn format-viewbox [vbox]
-  (str/join " " [(+ (:x vbox 0) (:left-offset vbox 0))
+  (str/join " " [(:x vbox 0)
                  (:y vbox 0)
                  (:width vbox 0)
                  (:height vbox 0)]))
@@ -36,16 +38,16 @@
   (let [data     (mf/deref refs/workspace-page)
         objects  (:objects data)
         root     (get objects uuid/zero)
-        shapes   (->> (:shapes root) (map #(get objects %)))]
-    [:*
-     [:g.shapes
-      (for [item shapes]
-        (if (= (:type item) :frame)
-          [:& frame-wrapper {:shape item
-                             :key (:id item)
-                             :objects objects}]
-          [:& shape-wrapper {:shape item
-                             :key (:id item)}]))]]))
+        shapes   (->> (:shapes root)
+                      (map (d/getf objects)))]
+    [:g.shapes
+     (for [item shapes]
+       (if (= (:type item) :frame)
+         [:& shapes/frame-wrapper {:shape item
+                                   :key (:id item)
+                                   :objects objects}]
+         [:& shapes/shape-wrapper {:shape item
+                                   :key (:id item)}]))]))
 
 (mf/defc pixel-overlay
   {::mf/wrap-props false}
@@ -100,14 +102,16 @@
          (fn [event]
            (dom/prevent-default event)
            (dom/stop-propagation event)
-           (st/emit! (dwc/pick-color-select true (kbd/shift? event)))))
+           (st/emit! (dwu/start-undo-transaction)
+                     (dwc/pick-color-select true (kbd/shift? event)))))
 
         handle-mouse-up-picker
         (mf/use-callback
          (fn [event]
            (dom/prevent-default event)
            (dom/stop-propagation event)
-           (st/emit! (dwc/stop-picker))
+           (st/emit! (dwu/commit-undo-transaction)
+                     (dwc/stop-picker))
            (modal/disallow-click-outside!)))
 
         handle-image-load

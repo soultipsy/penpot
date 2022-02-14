@@ -59,7 +59,7 @@
     border-bottom: 1px solid $color-gray-60;
   }
 
-  & :last-child{
+  & :last-child {
     border-bottom: none;
   }
 
@@ -233,10 +233,7 @@
 
     .attributes-shadow {
       display: flex;
-
-      .attributes-label {
-        margin-right: 2px;
-      }
+      margin-left: 4px;
     }
   }
 
@@ -272,7 +269,6 @@
     .typography-sample {
       font-size: $fs16;
     }
-
   }
 
   .download-button {

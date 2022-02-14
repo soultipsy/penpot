@@ -8,13 +8,14 @@
   (:require
    [app.common.math :as mth]
    [app.main.data.workspace.colors :as mdc]
-   [app.main.data.workspace.state-helpers :as wsh]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.components.color-bullet :as cb]
    [app.main.ui.components.dropdown :refer [dropdown]]
+   [app.main.ui.hooks.resize :refer [use-resize-hook]]
    [app.main.ui.icons :as i]
    [app.util.color :as uc]
+   [app.util.dom :as dom]
    [app.util.i18n :refer [tr]]
    [app.util.keyboard :as kbd]
    [app.util.object :as obj]
@@ -39,22 +40,21 @@
 
 ;; --- Components
 (mf/defc palette-item
-  [{:keys [color size]}]
-  (let [select-color
+  [{:keys [color]}]
+  (let [ids-with-children (map :id (mf/deref refs/selected-shapes-with-children))
+        select-color
         (fn [event]
-          (let [ids (wsh/lookup-selected @st/state)]
-            (if (kbd/shift? event)
-              (st/emit! (mdc/change-stroke ids (merge uc/empty-color color)))
-              (st/emit! (mdc/change-fill ids (merge uc/empty-color color))))))]
+          (if (kbd/alt? event)
+              (st/emit! (mdc/change-stroke ids-with-children (merge uc/empty-color color)))
+              (st/emit! (mdc/change-fill ids-with-children (merge uc/empty-color color)))))]
 
-    [:div.color-cell {:class (str "cell-"(name size))
-                      :on-click select-color}
+    [:div.color-cell {:on-click select-color}
      [:& cb/color-bullet {:color color}]
-     [:& cb/color-name {:color color :size size}]]))
+     [:& cb/color-name {:color color}]]))
 
 (mf/defc palette
-  [{:keys [current-colors recent-colors file-colors shared-libs selected size]}]
-  (let [state      (mf/use-state {:show-menu false })
+  [{:keys [current-colors recent-colors file-colors shared-libs selected]}]
+  (let [state      (mf/use-state {:show-menu false})
 
         width      (:width @state 0)
         visible    (mth/round (/ width 66))
@@ -64,6 +64,9 @@
                       visible)
 
         container  (mf/use-ref nil)
+
+        {:keys [on-pointer-down on-lost-pointer-capture on-mouse-move parent-ref size]}
+        (use-resize-hook :palette 72 54 80 :y true :bottom)
 
         on-left-arrow-click
         (mf/use-callback
@@ -112,7 +115,13 @@
         (fn []
           (events/unlistenByKey key1))))
 
-    [:div.color-palette.left-sidebar-open
+    [:div.color-palette {:ref parent-ref
+                         :class (dom/classnames :no-text (< size 72))
+                         :style #js {"--height" (str size "px")
+                                     "--bullet-size" (str (if (< size 72) (- size 15) (- size 30)) "px")}}
+     [:div.resize-area {:on-pointer-down on-pointer-down
+                        :on-lost-pointer-capture on-lost-pointer-capture
+                        :on-mouse-move on-mouse-move}]
      [:& dropdown {:show (:show-menu @state)
                    :on-close #(swap! state assoc :show-menu false)}
       [:ul.workspace-context-menu.palette-menu
@@ -147,33 +156,18 @@
         [:div.color-sample
          (for [[idx color] (map-indexed vector (take 7 (reverse recent-colors))) ]
            [:& cb/color-bullet {:key (str "color-" idx)
-                                :color color}])]]
-
-       [:hr.dropdown-separator]
-
-       [:li
-        {:on-click #(st/emit! (mdc/change-palette-size :big))}
-        (when (= size :big) i/tick)
-        (tr "workspace.libraries.colors.big-thumbnails")]
-
-       [:li
-        {:on-click #(st/emit! (mdc/change-palette-size :small))}
-        (when (= size :small) i/tick)
-        (tr "workspace.libraries.colors.small-thumbnails")]]]
+                                :color color}])]]]]
 
      [:div.color-palette-actions
       {:on-click #(swap! state assoc :show-menu true)}
       [:div.color-palette-actions-button i/actions]]
 
      [:span.left-arrow {:on-click on-left-arrow-click} i/arrow-slide]
-     [:div.color-palette-content {:class (if (= size :big) "size-big" "size-small")
-                                  :ref container :on-wheel on-scroll}
+     [:div.color-palette-content {:ref container :on-wheel on-scroll}
       [:div.color-palette-inside {:style {:position "relative"
                                           :right (str (* 66 offset) "px")}}
        (for [[idx item] (map-indexed vector current-colors)]
-         [:& palette-item {:size size
-                           :color item
-                           :key idx}])]]
+         [:& palette-item {:color item :key idx}])]]
 
      [:span.right-arrow {:on-click on-right-arrow-click} i/arrow-slide]]))
 
@@ -184,13 +178,12 @@
            (vals))))
 
 (mf/defc colorpalette
+  {::mf/wrap [mf/memo]}
   []
   (let [recent-colors (mf/deref refs/workspace-recent-colors)
         file-colors   (mf/deref refs/workspace-file-colors)
         shared-libs   (mf/deref refs/workspace-libraries)
         selected      (or (mf/deref selected-palette-ref) :recent)
-        size      (or (mf/deref selected-palette-size-ref) :big)
-
         current-library-colors (mf/use-state [])]
 
     (mf/use-effect
@@ -220,5 +213,4 @@
                  :recent-colors recent-colors
                  :file-colors file-colors
                  :shared-libs shared-libs
-                 :selected selected
-                 :size size}]))
+                 :selected selected}]))

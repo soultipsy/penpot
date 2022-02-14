@@ -123,7 +123,12 @@
             text-ids  (filter is-text? ids)
             shape-ids (filter (comp not is-text?) ids)
 
-            attrs (cond-> {}
+            attrs (cond-> {:fill-color nil
+                           :fill-color-gradient nil
+                           ::fill-color-ref-file nil
+                           :fill-color-ref-id nil
+                           :fill-opacity nil}
+
                     (contains? color :color)
                     (assoc :fill-color (:color color))
 
@@ -143,12 +148,31 @@
          (rx/from (map #(dwt/update-text-attrs {:id % :attrs attrs}) text-ids))
          (rx/of (dch/update-shapes shape-ids (fn [shape] (d/merge shape attrs)))))))))
 
+(defn change-hide-fill-on-export
+  [ids hide-fill-on-export]
+  (ptk/reify ::change-hide-fill-on-export
+    ptk/WatchEvent
+    (watch [_ state _]
+      (let [page-id   (:current-page-id state)
+            objects   (wsh/lookup-page-objects state page-id)
+            is-text?  #(= :text (:type (get objects %)))
+            shape-ids (filter (complement is-text?) ids)
+            attrs {:hide-fill-on-export hide-fill-on-export}]
+        (rx/of (dch/update-shapes shape-ids (fn [shape]
+                                              (if (= (:type shape) :frame)
+                                                (d/merge shape attrs)
+                                                shape))))))))
+
 (defn change-stroke
   [ids color]
   (ptk/reify ::change-stroke
     ptk/WatchEvent
     (watch [_ _ _]
-      (let [attrs (cond-> {}
+      (let [attrs (cond-> {:stroke-color nil
+                           :stroke-color-ref-id nil
+                           :stroke-color-ref-file nil
+                           :stroke-color-gradient nil
+                           :stroke-opacity nil}
                     (contains? color :color)
                     (assoc :stroke-color (:color color))
 
@@ -182,11 +206,9 @@
               stop? (rx/filter (ptk/type? ::stop-picker) stream)
 
               update-events
-              (fn [[color shift?]]
-                (rx/of (if shift?
-                         (change-stroke ids color)
-                         (change-fill ids color))
-                       (stop-picker)))]
+              (fn [color]
+                (rx/of (change-fill ids color)))]
+
           (rx/merge
            ;; Stream that updates the stroke/width and stops if `esc` pressed
            (->> sub
@@ -195,12 +217,12 @@
 
            ;; Hide the modal if the stop event is emitted
            (->> stop?
-                (rx/first)
+                (rx/take 1)
                 (rx/map #(md/hide))))))
 
       ptk/UpdateEvent
       (update [_ state]
-        (let [handle-change-color (fn [color shift?] (rx/push! sub [color shift?]))]
+        (let [handle-change-color (fn [color] (rx/push! sub color))]
           (-> state
               (assoc-in [:workspace-local :picking-color?] true)
               (assoc ::md/modal {:id (random-uuid)

@@ -7,11 +7,11 @@
 (ns app.http.errors
   "A errors handling for the http server."
   (:require
-   [app.common.data :as d]
    [app.common.exceptions :as ex]
    [app.common.logging :as l]
+   [app.common.spec :as us]
    [app.common.uuid :as uuid]
-   [clojure.pprint]
+   [clojure.spec.alpha :as s]
    [cuerdas.core :as str]))
 
 (defn- parse-client-ip
@@ -20,44 +20,28 @@
       (get headers "x-real-ip")
       (get request :remote-addr)))
 
-
-(defn- simple-prune
-  ([s] (simple-prune s (* 1024 1024)))
-  ([s max-length]
-   (if (> (count s) max-length)
-     (str (subs s 0 max-length) " [...]")
-     s)))
-
-(defn- stringify-data
-  [data]
-  (binding [clojure.pprint/*print-right-margin* 200]
-    (let [result (with-out-str (clojure.pprint/pprint data))]
-      (simple-prune result (* 1024 1024)))))
-
 (defn get-error-context
   [request error]
   (let [data (ex-data error)]
-    (d/without-nils
-     (merge
-      {:id      (str (uuid/next))
-       :path    (str (:uri request))
-       :method  (name (:request-method request))
-       :hint    (or (:hint data) (ex-message error))
-       :params  (stringify-data (:params request))
-       :data    (stringify-data (dissoc data :explain))
-       :ip-addr (parse-client-ip request)
-       :explain (str/prune (:explain data) (* 1024 1024) "[...]")}
+    (merge
+     {:id            (uuid/next)
+      :path          (:uri request)
+      :method        (:request-method request)
+      :hint          (ex-message error)
+      :params        (:params request)
 
-     (when-let [id (:profile-id request)]
-       {:profile-id id})
+      :spec-problems (some->> data ::s/problems (take 10) seq vec)
+      :spec-value    (some->> data ::s/value)
+      :data          (some-> data (dissoc ::s/problems ::s/value ::s/spec))
+      :ip-addr       (parse-client-ip request)
+      :profile-id    (:profile-id request)}
 
      (let [headers (:headers request)]
        {:user-agent (get headers "user-agent")
         :frontend-version (get headers "x-frontend-version" "unknown")})
 
-     (when (map? data)
-       {:error-type (:type data)
-        :error-code (:code data)})))))
+     (when (and data (::s/problems data))
+       {:spec-explain (us/pretty-explain data)}))))
 
 (defmulti handle-exception
   (fn [err & _rest]
@@ -74,32 +58,26 @@
   {:status 400 :body (ex-data err)})
 
 (defmethod handle-exception :validation
-  [err req]
-  (let [header (get-in req [:headers "accept"])
-        edata  (ex-data err)]
-    (if (and (= :spec-validation (:code edata))
-             (str/starts-with? header "text/html"))
-      {:status 400
-       :headers {"content-type" "text/html"}
-       :body (str "<pre style='font-size:16px'>"
-                  (:explain edata)
-                  "</pre>\n")}
-      {:status 400
-       :body   (dissoc edata :data)})))
+  [err _]
+  (let [data    (ex-data err)
+        explain (us/pretty-explain data)]
+    {:status 400
+     :body (-> data
+               (dissoc ::s/problems)
+               (dissoc ::s/value)
+               (cond-> explain (assoc :explain explain)))}))
 
 (defmethod handle-exception :assertion
   [error request]
-  (let [edata (ex-data error)
-        cdata (get-error-context request error)]
-    (l/update-thread-context! cdata)
-    (l/error :hint "internal error: assertion"
-             :error-id (str (:id cdata))
+  (let [edata (ex-data error)]
+    (l/error ::l/raw (ex-message error)
+             ::l/context (get-error-context request error)
              :cause error)
 
     {:status 500
      :body {:type :server-error
             :code :assertion
-            :data (dissoc edata :data)}}))
+            :data (dissoc edata ::s/problems ::s/value ::s/spec)}}))
 
 (defmethod handle-exception :not-found
   [err _]
@@ -116,11 +94,9 @@
     (if (and (ex/exception? (:rollback edata))
              (ex/exception? (:handling edata)))
       (handle-exception (:handling edata) request)
-      (let [cdata (get-error-context request error)]
-        (l/update-thread-context! cdata)
-        (l/error :hint "internal error"
-                 :error-message (ex-message error)
-                 :error-id (str (:id cdata))
+      (do
+        (l/error ::l/raw (ex-message error)
+                 ::l/context (get-error-context request error)
                  :cause error)
         {:status 500
          :body {:type :server-error
@@ -130,16 +106,10 @@
 
 (defmethod handle-exception org.postgresql.util.PSQLException
   [error request]
-  (let [cdata (get-error-context request error)
-        state (.getSQLState ^java.sql.SQLException error)]
-
-    (l/update-thread-context! cdata)
-    (l/error :hint "psql exception"
-             :error-message (ex-message error)
-             :error-id (str (:id cdata))
-             :sql-state state
+  (let [state (.getSQLState ^java.sql.SQLException error)]
+    (l/error ::l/raw (ex-message error)
+             ::l/context (get-error-context request error)
              :cause error)
-
     (cond
       (= state "57014")
       {:status 504
