@@ -1,6 +1,6 @@
 msgid ""
 msgstr ""
-"PO-Revision-Date: 2021-11-25 13:50+0000\n"
+"PO-Revision-Date: 2022-03-27 23:09+0000\n"
 "Last-Translator: Yaron Shahrabani <sh.yaron@gmail.com>\n"
 "Language-Team: Hebrew "
 "<https://hosted.weblate.org/projects/penpot/frontend/he/>\n"
@@ -10,7 +10,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=4; plural=(n == 1) ? 0 : ((n == 2) ? 1 : ((n > 10 && "
 "n % 10 == 0) ? 2 : 3));\n"
-"X-Generator: Weblate 4.10-dev\n"
+"X-Generator: Weblate 4.12-dev\n"
 
 #: src/app/main/ui/auth/register.cljs
 msgid "auth.already-have-account"
@@ -57,24 +57,20 @@ msgid "auth.login-submit"
 msgstr "כניסה"
 
 #: src/app/main/ui/auth/login.cljs
-msgid "auth.login-subtitle"
-msgstr "נא למלא את הפרטים שלך להלן"
-
-#: src/app/main/ui/auth/login.cljs
 msgid "auth.login-title"
 msgstr "שמחים לראות אותך שוב!"
 
 #: src/app/main/ui/auth/login.cljs
 msgid "auth.login-with-github-submit"
-msgstr "כניסה עם GitHub"
+msgstr "GitHub"
 
 #: src/app/main/ui/auth/login.cljs
 msgid "auth.login-with-gitlab-submit"
-msgstr "כניסה עם GitLab"
+msgstr "GitLab"
 
 #: src/app/main/ui/auth/login.cljs
 msgid "auth.login-with-google-submit"
-msgstr "כניסה עם Google"
+msgstr "Google"
 
 #: src/app/main/ui/auth/login.cljs
 msgid "auth.login-with-ldap-submit"
@@ -82,7 +78,7 @@ msgstr "כניסה עם LDAP"
 
 #: src/app/main/ui/auth/login.cljs
 msgid "auth.login-with-oidc-submit"
-msgstr "כניסה עם OpenID ‏(SSO)"
+msgstr "OpenID Connect"
 
 #: src/app/main/ui/auth/recovery.cljs
 msgid "auth.new-password"
@@ -252,17 +248,41 @@ msgstr "עדיין אין לך כאן קבצים"
 #, markdown
 msgid "dashboard.empty-placeholder-drafts"
 msgstr ""
-"עדיין אין כאן קבצים. כדי לנסות כמה תבניות ניתן לגשת אל [אזור הספריות "
+"אבוי! עדיין אין לך קבצים! כדי להתנסות עם כמה מהתבניות ניתן לגשת אל [הספריות "
 "והתבניות](https://penpot.app/libraries-templates.html)"
 
 msgid "dashboard.export-frames"
 msgstr "ייצוא לוחות אומנות ל־PDF…"
 
+#: src/app/main/ui/export.cljs
+msgid "dashboard.export-frames.title"
+msgstr "ייצוא ל־PDF"
+
 msgid "dashboard.export-multi"
-msgstr "ייצוא קובצי %s"
+msgstr "ייצוא קובצי %s של Penpot"
+
+#: src/app/main/ui/export.cljs
+msgid "dashboard.export-multiple.selected"
+msgstr "נבחרו %s מתוך %s רכיבים"
+
+#: src/app/main/ui/export.cljs
+msgid "dashboard.export-shapes.how-to"
+msgstr "אפשר להוסיף הגדרות ייצוא לרכיבים ממאפייני העיצוב (מתחתית הסרגל שמשמאל)."
+
+#: src/app/main/ui/export.cljs
+msgid "dashboard.export-shapes.how-to-link"
+msgstr "מידע על הגדרות ייצוא ב־Penpot."
+
+#: src/app/main/ui/export.cljs
+msgid "dashboard.export-shapes.no-elements"
+msgstr "אין רכיבים עם הגדרות ייצוא."
+
+#: src/app/main/ui/export.cljs
+msgid "dashboard.export-shapes.title"
+msgstr "ייצוא הבחירה"
 
 msgid "dashboard.export-single"
-msgstr "ייצוא קובץ"
+msgstr "ייצוא קובץ Penpot"
 
 msgid "dashboard.export.detail"
 msgstr "* עשוי לכלול רכיבים, גרפיקה, צבעים ו/או טיפוגרפיות."
@@ -296,8 +316,20 @@ msgstr "ייצוא קבצים"
 msgid "dashboard.fonts.deleted-placeholder"
 msgstr "הגופן נמחק"
 
+#: src/app/main/ui/dashboard/fonts.cljs
+msgid "dashboard.fonts.dismiss-all"
+msgstr "להתעלם מהכול"
+
 msgid "dashboard.fonts.empty-placeholder"
 msgstr "עדיין לא מותקנים אצלך גופנים משלך."
+
+#: src/app/main/ui/dashboard/fonts.cljs
+msgid "dashboard.fonts.fonts-added"
+msgid_plural "dashboard.fonts.fonts-added"
+msgstr[0] "נוסף גופן"
+msgstr[1] "נוספו 2 גופנים"
+msgstr[2] "נוספו %s גופנים"
+msgstr[3] "נוספו %s גופנים"
 
 #, markdown
 msgid "dashboard.fonts.hero-text1"
@@ -315,8 +347,12 @@ msgstr ""
 "Penpot](https://penpot.app/terms.html). אפשר גם לקרוא גם על [רישוי "
 "גופנים](https://www.typography.com/faq)."
 
+#: src/app/main/ui/dashboard/fonts.cljs
+msgid "dashboard.fonts.upload-all"
+msgstr "להעלות הכול"
+
 msgid "dashboard.import"
-msgstr "ייבוא קבצים"
+msgstr "ייבוא קובצי Penpot"
 
 msgid "dashboard.import.analyze-error"
 msgstr "אופס! לא הצלחנו לייבא את הקובץ הזה"
@@ -326,6 +362,9 @@ msgstr "אירעה תקלה בייבוא הקובץ. הוא לא ייובא."
 
 msgid "dashboard.import.import-message"
 msgstr "%s קבצים עברו ייבוא כרגיל."
+
+msgid "dashboard.import.import-warning"
+msgstr "חלק מהקבצים הכילו פריטים שגויים שהוסרו."
 
 msgid "dashboard.import.progress.process-colors"
 msgstr "עיבוד צבעים"
@@ -547,6 +586,10 @@ msgid "dashboard.your-penpot"
 msgstr "ה־Penpot שלך"
 
 #: src/app/main/ui/confirm.cljs
+msgid "ds.component-subtitle"
+msgstr "רכיבים לעדכון:"
+
+#: src/app/main/ui/confirm.cljs
 msgid "ds.confirm-cancel"
 msgstr "ביטול"
 
@@ -562,6 +605,9 @@ msgstr "להמשיך?"
 msgid "ds.updated-at"
 msgstr "עדכון: %s"
 
+msgid "errors.auth.unable-to-login"
+msgstr "נראה שלא עברת אימות או שתוקף ההפעלה פג."
+
 #: src/app/main/data/workspace.cljs
 msgid "errors.clipboard-not-implemented"
 msgstr "הדפדפן שלך לא יכול לבצע את הפעולה הזאת"
@@ -574,6 +620,9 @@ msgstr "כתובת הדוא״ל כבר בשימוש"
 msgid "errors.email-already-validated"
 msgstr "כתובת הדוא״ל כבר אומתה."
 
+msgid "errors.email-as-password"
+msgstr "אין לך אפשרות להשתמש בכתובת הדוא״ל שלך כסיסמה"
+
 #: src/app/main/ui/auth/register.cljs, src/app/main/ui/auth/recovery_request.cljs, src/app/main/ui/settings/change_email.cljs, src/app/main/ui/dashboard/team.cljs
 msgid "errors.email-has-permanent-bounces"
 msgstr "לכתובת הדוא״ל „%s” יש יותר מדי דוחות החזרה קבועים."
@@ -581,6 +630,9 @@ msgstr "לכתובת הדוא״ל „%s” יש יותר מדי דוחות הח�
 #: src/app/main/ui/settings/change_email.cljs
 msgid "errors.email-invalid-confirmation"
 msgstr "כתובת הדוא״ל לאימות חייבת להיות תואמת"
+
+msgid "errors.email-spam-or-permanent-bounces"
+msgstr "כתובת הדוא״ל „%s” דווחה כספאם או שההודעות תוקפצנה לצמיתות."
 
 #: src/app/main/ui/auth/verify_token.cljs, src/app/main/ui/settings/feedback.cljs, src/app/main/ui/dashboard/team.cljs
 msgid "errors.generic"
@@ -635,6 +687,15 @@ msgstr "הודעות הדוא״ל לפרופיל שלך מושתקות (דיוו
 #: src/app/main/ui/auth/register.cljs
 msgid "errors.registration-disabled"
 msgstr "ההרשמה מושבתת כרגע."
+
+msgid "errors.team-leave.insufficient-members"
+msgstr "אין מספיק חברים כדי לעזוב את הצוות, כנראה יהיה עליך למחוק אותו."
+
+msgid "errors.team-leave.member-does-not-exists"
+msgstr "החבר שניסית להקצות לא קיים."
+
+msgid "errors.team-leave.owner-cant-leave"
+msgstr "הבעלים לא יכולים לעזוב את הקבוצה, עליך להעביר את תפקיד הבעלות."
 
 msgid "errors.terms-privacy-agreement-invalid"
 msgstr "עליך לקבל את תנאי השירות ואת מדיניות הפרטיות."
@@ -883,6 +944,9 @@ msgstr "קוד"
 msgid "handoff.tabs.code.selected.circle"
 msgstr "עיגול"
 
+msgid "handoff.tabs.code.selected.component"
+msgstr "רכיב"
+
 msgid "handoff.tabs.code.selected.curve"
 msgstr "עיקול"
 
@@ -894,6 +958,9 @@ msgstr "קבוצה"
 
 msgid "handoff.tabs.code.selected.image"
 msgstr "תמונה"
+
+msgid "handoff.tabs.code.selected.mask"
+msgstr "מסכה"
 
 #: src/app/main/ui/handoff/right_sidebar.cljs
 msgid "handoff.tabs.code.selected.multiple"
@@ -917,6 +984,10 @@ msgstr "מידע"
 
 msgid "history.alert-message"
 msgstr "הגרסה שמוצגת היא %s"
+
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.about-penpot"
+msgstr "על Penpot"
 
 msgid "labels.accept"
 msgstr "מקובל"
@@ -966,6 +1037,9 @@ msgstr "תוכן"
 msgid "labels.continue"
 msgstr "להמשיך"
 
+msgid "labels.continue-with"
+msgstr "להמשיך עם"
+
 #: src/app/main/ui/workspace/sidebar/assets.cljs
 msgid "labels.create"
 msgstr "יצירה"
@@ -1000,6 +1074,10 @@ msgstr "מחיקת הערה"
 msgid "labels.delete-comment-thread"
 msgstr "מחיקת שרשור"
 
+#: src/app/main/ui/dashboard/team.cljs
+msgid "labels.delete-invitation"
+msgstr "מחיקת הזמנה"
+
 #: src/app/main/ui/dashboard/file_menu.cljs
 msgid "labels.delete-multi-files"
 msgstr "מחיקת %s קבצים"
@@ -1022,6 +1100,10 @@ msgstr "עורך"
 #: src/app/main/ui/dashboard/team.cljs, src/app/main/ui/dashboard/team.cljs
 msgid "labels.email"
 msgstr "דוא״ל"
+
+#: src/app/main/ui/dashboard/team.cljs
+msgid "labels.expired-invitation"
+msgstr "התוקף פג"
 
 msgid "labels.export"
 msgstr "ייצוא"
@@ -1053,6 +1135,10 @@ msgstr "הגשת משוב"
 msgid "labels.go-back"
 msgstr "חזרה"
 
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.help-center"
+msgstr "מרכז העזרה"
+
 #: src/app/main/ui/workspace/comments.cljs, src/app/main/ui/viewer/header.cljs
 msgid "labels.hide-resolved-comments"
 msgstr "הסתרת הערות שנפתרו"
@@ -1076,9 +1162,17 @@ msgstr ""
 msgid "labels.internal-error.main-message"
 msgstr "שגיאה פנימית"
 
+#: src/app/main/ui/settings/sidebar.cljs, src/app/main/ui/dashboard/team.cljs, src/app/main/ui/dashboard/team.cljs, src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.invitations"
+msgstr "הזמנות"
+
 #: src/app/main/ui/settings/options.cljs
 msgid "labels.language"
 msgstr "שפה"
+
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.libraries-and-templates"
+msgstr "ספריות ותבניות"
 
 msgid "labels.link"
 msgstr "קישור"
@@ -1089,6 +1183,10 @@ msgstr "יציאה"
 
 msgid "labels.manage-fonts"
 msgstr "ניהול גופנים"
+
+#: src/app/main/ui/dashboard/team.cljs, src/app/main/ui/dashboard/team.cljs, src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.member"
+msgstr "חבר"
 
 #: src/app/main/ui/dashboard/team.cljs, src/app/main/ui/dashboard/team.cljs, src/app/main/ui/dashboard/sidebar.cljs
 msgid "labels.members"
@@ -1108,6 +1206,14 @@ msgstr "הבא"
 #: src/app/main/ui/workspace/comments.cljs, src/app/main/ui/dashboard/comments.cljs
 msgid "labels.no-comments-available"
 msgstr "אין לך התראות ממתינות על הערות"
+
+#: src/app/main/ui/dashboard/team.cljs
+msgid "labels.no-invitations"
+msgstr "אין הזמנות."
+
+#: src/app/main/ui/dashboard/team.cljs
+msgid "labels.no-invitations-hint"
+msgstr "לחיצה על הכפתור „הזמנה לצוות” תאפשר להזמין חברים נוספים לצוות הזה."
 
 #: src/app/main/ui/static.cljs
 msgid "labels.not-found.auth-info"
@@ -1164,6 +1270,10 @@ msgid "labels.password"
 msgstr "סיסמה"
 
 #: src/app/main/ui/dashboard/team.cljs
+msgid "labels.pending-invitation"
+msgstr "בהמתנה"
+
+#: src/app/main/ui/dashboard/team.cljs
 msgid "labels.permissions"
 msgstr "הרשאות"
 
@@ -1186,6 +1296,10 @@ msgstr "הודעות מהדורה"
 msgid "labels.remove"
 msgstr "הסרה"
 
+#: src/app/main/ui/dashboard/team.cljs
+msgid "labels.remove-member"
+msgstr "הסרת חבר"
+
 #: src/app/main/ui/dashboard/sidebar.cljs, src/app/main/ui/dashboard/project_menu.cljs, src/app/main/ui/dashboard/file_menu.cljs
 msgid "labels.rename"
 msgstr "שינוי שם"
@@ -1193,6 +1307,10 @@ msgstr "שינוי שם"
 #: src/app/main/ui/dashboard/team_form.cljs
 msgid "labels.rename-team"
 msgstr "שינוי שם לצוות"
+
+#: src/app/main/ui/dashboard/team.cljs
+msgid "labels.resend-invitation"
+msgstr "שליחת ההזמנה מחדש"
 
 #: src/app/main/ui/static.cljs, src/app/main/ui/static.cljs, src/app/main/ui/static.cljs
 msgid "labels.retry"
@@ -1253,6 +1371,10 @@ msgstr "דילוג"
 msgid "labels.start"
 msgstr "התחלה"
 
+#: src/app/main/ui/dashboard/team.cljs
+msgid "labels.status"
+msgstr "מצב"
+
 #: src/app/main/ui/settings/profile.cljs
 msgid "labels.update"
 msgstr "עדכון"
@@ -1281,6 +1403,14 @@ msgstr "סביבת עבודה"
 msgid "labels.write-new-comment"
 msgstr "כתיבת הערה חדשה"
 
+#: src/app/main/ui/dashboard/team.cljs, src/app/main/ui/dashboard/team.cljs, src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.you"
+msgstr "(אני)"
+
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.your-account"
+msgstr "החשבון שלך"
+
 #: src/app/main/data/workspace/persistence.cljs, src/app/main/data/workspace/persistence.cljs, src/app/main/data/media.cljs
 msgid "media.loading"
 msgstr "התמונה נטענת…"
@@ -1298,6 +1428,10 @@ msgstr ""
 #: src/app/main/ui/workspace/header.cljs, src/app/main/ui/dashboard/file_menu.cljs
 msgid "modals.add-shared-confirm.message"
 msgstr "הוספת „%s” כספריה משותפת"
+
+#: src/app/main/ui/workspace/nudge.cljs
+msgid "modals.big-nudge"
+msgstr "הינד גדול"
 
 #: src/app/main/ui/settings/change_email.cljs
 msgid "modals.change-email.confirm-email"
@@ -1318,6 +1452,12 @@ msgstr "החלפת כתובת דוא״ל"
 #: src/app/main/ui/settings/change_email.cljs
 msgid "modals.change-email.title"
 msgstr "החלפת כתובת הדוא״ל שלך"
+
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "modals.change-owner-and-leave-confirm.message"
+msgstr ""
+"הבעלות של הצוות הזה בידיך. נא לבחור מישהו מהרשימה כדי לקדם אותו לבעלי "
+"הקבוצה בטרם עזיבתך."
 
 #: src/app/main/ui/settings/delete_account.cljs
 msgid "modals.delete-account.cancel"
@@ -1431,9 +1571,20 @@ msgstr "למחוק חבר בצוות"
 msgid "modals.invite-member-confirm.accept"
 msgstr "שליחת הזמנה"
 
+msgid "modals.invite-member.emails"
+msgstr "כתובות דוא״ל, מופרדות בפסיקים"
+
 #: src/app/main/ui/dashboard/team.cljs
 msgid "modals.invite-member.title"
 msgstr "הזמנה להצטרף לצוות"
+
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "modals.leave-and-close-confirm.hint"
+msgstr "כיוון שאין עוד חברים בצוות הזה מלבדך, הצוות יימחק על כל המיזמים והקבצים שלו."
+
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "modals.leave-and-close-confirm.message"
+msgstr "ברצונך לעזוב את הצוות %s?"
 
 msgid "modals.leave-and-reassign.forbiden"
 msgstr ""
@@ -1442,7 +1593,7 @@ msgstr ""
 
 #: src/app/main/ui/dashboard/sidebar.cljs
 msgid "modals.leave-and-reassign.hint1"
-msgstr "הבעלות על %s בידיך."
+msgstr "הבעלות על הצוות הזה בידיך. נא לבחור מישהו כדי לקידום לבעלות בטרם עזיבתך."
 
 #: src/app/main/ui/dashboard/sidebar.cljs
 msgid "modals.leave-and-reassign.hint2"
@@ -1458,7 +1609,7 @@ msgstr "נא לבחור חבר לקידום"
 
 #: src/app/main/ui/dashboard/sidebar.cljs
 msgid "modals.leave-and-reassign.title"
-msgstr "נא לבחור חבר לקידום"
+msgstr "בטרם עזיבתך"
 
 #: src/app/main/ui/dashboard/sidebar.cljs
 msgid "modals.leave-confirm.accept"
@@ -1472,17 +1623,27 @@ msgstr "לעזוב את הצוות הזה?"
 msgid "modals.leave-confirm.title"
 msgstr "עזיבת הצוות"
 
+#: src/app/main/ui/workspace/nudge.cljs
+msgid "modals.nudge-title"
+msgstr "כמות ההינד"
+
 #: src/app/main/ui/dashboard/team.cljs
 msgid "modals.promote-owner-confirm.accept"
-msgstr "קידום"
+msgstr "העברת בעלות"
+
+#: src/app/main/ui/dashboard/team.cljs
+msgid "modals.promote-owner-confirm.hint"
+msgstr ""
+"העברת בעלות תשנה את תפקידך לחלק מההנהלה תוך אובדן חלק מההרשאות שלך על הצוות "
+"הזה. "
 
 #: src/app/main/ui/dashboard/team.cljs
 msgid "modals.promote-owner-confirm.message"
-msgstr "לקדם את המשתמש הזה לבעלים?"
+msgstr "הצוות הזה הוא כרגע בבעלותך. להפוך את %s לבעלים החדשים של הצוות?"
 
 #: src/app/main/ui/dashboard/team.cljs
 msgid "modals.promote-owner-confirm.title"
-msgstr "קידום לבעלים"
+msgstr "בעלים חדשים לצוות"
 
 #: src/app/main/ui/workspace/header.cljs, src/app/main/ui/dashboard/file_menu.cljs
 msgid "modals.remove-shared-confirm.accept"
@@ -1498,9 +1659,23 @@ msgstr ""
 msgid "modals.remove-shared-confirm.message"
 msgstr "הסרת „%s” כספריה משותפת"
 
+#: src/app/main/ui/workspace/nudge.cljs
+msgid "modals.small-nudge"
+msgstr "הינד קטן"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/context_menu.cljs
+msgid "modals.update-remote-component-in-bulk.hint"
+msgstr ""
+"פעולה זו תעדכן רכיבים בספרייה משותפת. עשוי להשפיע על קבצים אחרים שמשתמשים "
+"בה."
+
+#: src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/context_menu.cljs
+msgid "modals.update-remote-component-in-bulk.message"
+msgstr "עדכון רכיבים בספרייה משותפת"
+
 #: src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/context_menu.cljs
 msgid "modals.update-remote-component.accept"
-msgstr "עדכון רכיב"
+msgstr "עדכון"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/context_menu.cljs
 msgid "modals.update-remote-component.cancel"
@@ -1734,6 +1909,10 @@ msgid "title.settings.profile"
 msgstr "פרופיל - Penpot"
 
 #: src/app/main/ui/dashboard/team.cljs
+msgid "title.team-invitations"
+msgstr "הזמנות - %s -‏ Penpot"
+
+#: src/app/main/ui/dashboard/team.cljs
 msgid "title.team-members"
 msgstr "חברים - %s‏ - Penpot"
 
@@ -1766,7 +1945,7 @@ msgid "viewer.frame-not-found"
 msgstr "לוח האומנות לא נמצא."
 
 msgid "viewer.header.comments-section"
-msgstr "הערות"
+msgstr "הערות (%s)"
 
 #: src/app/main/ui/viewer/header.cljs
 msgid "viewer.header.dont-show-interactions"
@@ -1784,7 +1963,7 @@ msgid "viewer.header.interactions"
 msgstr "אינטראקציות"
 
 msgid "viewer.header.interactions-section"
-msgstr "אינטראקציות"
+msgstr "אינטראקציות (%s)"
 
 #: src/app/main/ui/viewer/header.cljs
 msgid "viewer.header.share.copy-link"
@@ -1977,6 +2156,18 @@ msgstr "התמרת טקסט"
 msgid "workspace.assets.ungroup"
 msgstr "פירוק קבוצה"
 
+msgid "workspace.focus.focus-mode"
+msgstr "מצב מיקוד"
+
+msgid "workspace.focus.focus-off"
+msgstr "מיקוד כבוי"
+
+msgid "workspace.focus.focus-on"
+msgstr "מיקוד פעיל"
+
+msgid "workspace.focus.selection"
+msgstr "בחירה"
+
 #: src/app/main/data/workspace/libraries.cljs, src/app/main/ui/components/color_bullet.cljs
 msgid "workspace.gradients.linear"
 msgstr "מדרג קווי"
@@ -1998,6 +2189,13 @@ msgid "workspace.header.menu.disable-snap-grid"
 msgstr "השבתת הצמדה לרשת"
 
 #: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.disable-snap-guides"
+msgstr "השבתת הצמדה לקווים המנחים"
+
+msgid "workspace.header.menu.disable-snap-pixel-grid"
+msgstr "השבתת הצמדה לפיקסל"
+
+#: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.enable-dynamic-alignment"
 msgstr "הפעלת יישור דינמי"
 
@@ -2008,6 +2206,17 @@ msgstr "הפעלת שינוי גודל טקסט"
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.enable-snap-grid"
 msgstr "הצמדה לרשת"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.enable-snap-guides"
+msgstr "הצמדה לקווים מנחים"
+
+msgid "workspace.header.menu.enable-snap-pixel-grid"
+msgstr "הפעלת הצמדה לפיקסל"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.hide-artboard-names"
+msgstr "הסתרת שמות משטחי יצירה"
 
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.hide-assets"
@@ -2025,13 +2234,40 @@ msgstr "הסתרת שכבות"
 msgid "workspace.header.menu.hide-palette"
 msgstr "הסתרת ערכת צבעים"
 
+msgid "workspace.header.menu.hide-pixel-grid"
+msgstr "הסתרת רשת פיקסלים"
+
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.hide-rules"
 msgstr "הסתרת כללים"
 
 #: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.hide-textpalette"
+msgstr "הסתרת לוח גופנים"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.option.edit"
+msgstr "עריכה"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.option.file"
+msgstr "קובץ"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.option.preferences"
+msgstr "העדפות"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.option.view"
+msgstr "תצוגה"
+
+#: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.select-all"
 msgstr "לבחור הכול"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.show-artboard-names"
+msgstr "הצגת שמות משטחי יצירה"
 
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.show-assets"
@@ -2049,9 +2285,20 @@ msgstr "הצגת שכבות"
 msgid "workspace.header.menu.show-palette"
 msgstr "הצגת ערכת צבעים"
 
+msgid "workspace.header.menu.show-pixel-grid"
+msgstr "הצגת רשת פיקסלים"
+
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.show-rules"
 msgstr "הצגת כללים"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.show-textpalette"
+msgstr "הצגת לוח גופנים"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.reset-zoom"
+msgstr "איפוס"
 
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.save-error"
@@ -2072,6 +2319,26 @@ msgstr "שינויים שלא נשמרו"
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.viewer"
 msgstr "מצב תצוגה (%s)"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.zoom-fill"
+msgstr "מילוי - שינוי גודל כדי למלא"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.zoom-fit"
+msgstr "התאמה - שינוי גודל כדי להתאים"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.zoom-fit-all"
+msgstr "כיוון תקריב כדי להציג הכול"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.zoom-full-screen"
+msgstr "מסך מלא"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.zoom-selected"
+msgstr "התמקדות על הנבחר"
 
 #: src/app/main/ui/workspace/libraries.cljs
 msgid "workspace.libraries.add"
@@ -2268,8 +2535,12 @@ msgid "workspace.options.export"
 msgstr "ייצוא"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/exports.cljs, src/app/main/ui/handoff/exports.cljs
+msgid "workspace.options.export-multiple"
+msgstr "ייצוא הבחירה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/exports.cljs, src/app/main/ui/handoff/exports.cljs
 msgid "workspace.options.export-object"
-msgstr "ייצוא צורה"
+msgstr "ייצוא רכיב"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/exports.cljs
 msgid "workspace.options.export.suffix"
@@ -2278,6 +2549,14 @@ msgstr "סיומת"
 #: src/app/main/ui/workspace/sidebar/options/menus/exports.cljs, src/app/main/ui/handoff/exports.cljs
 msgid "workspace.options.exporting-object"
 msgstr "מתבצע ייצוא…"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/exports.cljs, src/app/main/ui/handoff/exports.cljs, src/app/main/ui/workspace/header.cljs
+msgid "workspace.options.exporting-object-error"
+msgstr "הייצוא נכשל"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/exports.cljs, src/app/main/ui/handoff/exports.cljs, src/app/main/ui/workspace/header.cljs
+msgid "workspace.options.exporting-object-slow"
+msgstr "הייצוא אטי בהגזמה"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/fill.cljs
 msgid "workspace.options.fill"
@@ -2402,6 +2681,26 @@ msgid "workspace.options.interaction-after-delay"
 msgstr "לאחר השהיה"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-animation"
+msgstr "הנפשה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-animation-dissolve"
+msgstr "התמוססות"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-animation-none"
+msgstr "ללא"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-animation-push"
+msgstr "דחיפה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-animation-slide"
+msgstr "גלישה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
 msgid "workspace.options.interaction-background"
 msgstr "הוספת שכבת רקע"
 
@@ -2424,6 +2723,38 @@ msgstr "השהיה"
 #: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
 msgid "workspace.options.interaction-destination"
 msgstr "יעד"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-duration"
+msgstr "משך"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-easing"
+msgstr "החלקה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-easing-ease"
+msgstr "קלה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-easing-ease-in"
+msgstr "החלקה פנימה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-easing-ease-in-out"
+msgstr "החלקה פנימה החוצה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-easing-ease-out"
+msgstr "החלקה החוצה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-easing-linear"
+msgstr "קווי"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-in"
+msgstr "פנימה"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
 msgid "workspace.options.interaction-mouse-enter"
@@ -2450,6 +2781,10 @@ msgid "workspace.options.interaction-none"
 msgstr "(לא הוגדר)"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-offset-effect"
+msgstr "אפקט הזחה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
 msgid "workspace.options.interaction-on-click"
 msgstr "בלחיצה"
 
@@ -2464,6 +2799,10 @@ msgstr "פתיחת שכבת על: %s"
 #: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
 msgid "workspace.options.interaction-open-url"
 msgstr "פתיחת כתובת"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
+msgid "workspace.options.interaction-out"
+msgstr "החוצה"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/interactions.cljs
 msgid "workspace.options.interaction-pos-bottom-center"
@@ -2647,6 +2986,13 @@ msgstr "כל הפינות"
 msgid "workspace.options.radius.single-corners"
 msgstr "פינות בודדות"
 
+msgid "workspace.options.recent-fonts"
+msgstr "אחרונים"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/exports.cljs, src/app/main/ui/handoff/exports.cljs, src/app/main/ui/workspace/header.cljs
+msgid "workspace.options.retry"
+msgstr "לנסות שוב"
+
 #: src/app/main/ui/workspace/sidebar/options/menus/measures.cljs
 msgid "workspace.options.rotation"
 msgstr "סיבוב"
@@ -2708,6 +3054,10 @@ msgstr "צל של קבוצה"
 #: src/app/main/ui/workspace/sidebar/options/menus/shadow.cljs
 msgid "workspace.options.shadow-options.title.multiple"
 msgstr "צללים של בחירה"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/fill.cljs
+msgid "workspace.options.show-fill-on-export"
+msgstr "הצגה בייצואים"
 
 #: src/app/main/ui/workspace/sidebar/options/shapes/frame.cljs, src/app/main/ui/workspace/sidebar/options/menus/measures.cljs
 msgid "workspace.options.size"
@@ -2952,6 +3302,10 @@ msgid "workspace.shape.menu.copy"
 msgstr "העתקה"
 
 #: src/app/main/ui/workspace/context_menu.cljs
+msgid "workspace.shape.menu.create-artboard-from-selection"
+msgstr "בחירה ללוח אומנות"
+
+#: src/app/main/ui/workspace/context_menu.cljs
 msgid "workspace.shape.menu.create-component"
 msgstr "יצירת רכיב"
 
@@ -2970,6 +3324,10 @@ msgstr "מחיקת התחלת זרימה"
 #: src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/context_menu.cljs, src/app/main/ui/workspace/context_menu.cljs
 msgid "workspace.shape.menu.detach-instance"
 msgstr "ניתוק מופע"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/context_menu.cljs, src/app/main/ui/workspace/context_menu.cljs
+msgid "workspace.shape.menu.detach-instances-in-bulk"
+msgstr "הפרדת מופעים"
 
 msgid "workspace.shape.menu.difference"
 msgstr "הבדל"
@@ -3020,6 +3378,9 @@ msgstr "קבוצה"
 msgid "workspace.shape.menu.hide"
 msgstr "הסתרה"
 
+msgid "workspace.shape.menu.hide-ui"
+msgstr "הצגת/הסתרת מנשק משתמש"
+
 msgid "workspace.shape.menu.intersection"
 msgstr "הצלבה"
 
@@ -3043,12 +3404,22 @@ msgid "workspace.shape.menu.reset-overrides"
 msgstr "איפוס מעקפים"
 
 #: src/app/main/ui/workspace/context_menu.cljs
+msgid "workspace.shape.menu.select-layer"
+msgstr "בחירת שכבה"
+
+#: src/app/main/ui/workspace/context_menu.cljs
 msgid "workspace.shape.menu.show"
 msgstr "הצגה"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/context_menu.cljs
 msgid "workspace.shape.menu.show-main"
 msgstr "הצגת הרכיב הראשי"
+
+msgid "workspace.shape.menu.thumbnail-remove"
+msgstr "הסרת התמונה הממוזערת"
+
+msgid "workspace.shape.menu.thumbnail-set"
+msgstr "הגדרה כתמונה ממוזערת"
 
 msgid "workspace.shape.menu.transform-to-path"
 msgstr "המרה לנתיב"
@@ -3069,6 +3440,10 @@ msgid "workspace.shape.menu.unmask"
 msgstr "ביטול מסכה"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/context_menu.cljs, src/app/main/ui/workspace/context_menu.cljs
+msgid "workspace.shape.menu.update-components-in-bulk"
+msgstr "עדכון הרכיבים הראשיים"
+
+#: src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/sidebar/options/menus/component.cljs, src/app/main/ui/workspace/context_menu.cljs, src/app/main/ui/workspace/context_menu.cljs
 msgid "workspace.shape.menu.update-main"
 msgstr "עדכון הרכיב הראשי"
 
@@ -3079,6 +3454,30 @@ msgstr "היסטוריה (%s)"
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.sidebar.layers"
 msgstr "שכבות"
+
+msgid "workspace.sidebar.layers.components"
+msgstr "רכיבים"
+
+msgid "workspace.sidebar.layers.frames"
+msgstr "לוחות יצירה"
+
+msgid "workspace.sidebar.layers.groups"
+msgstr "קבוצות"
+
+msgid "workspace.sidebar.layers.images"
+msgstr "תמונות"
+
+msgid "workspace.sidebar.layers.masks"
+msgstr "מסכות"
+
+msgid "workspace.sidebar.layers.search"
+msgstr "חיפוש בשכבות"
+
+msgid "workspace.sidebar.layers.shapes"
+msgstr "צורות"
+
+msgid "workspace.sidebar.layers.texts"
+msgstr "טקסטים"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/svg_attrs.cljs, src/app/main/ui/handoff/attributes/svg.cljs
 msgid "workspace.sidebar.options.svg-attrs.title"
@@ -3135,6 +3534,10 @@ msgstr "ריבוע (%s)"
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.toolbar.text"
 msgstr "טקסט (%s)"
+
+#: src/app/main/ui/workspace/left_toolbar.cljs
+msgid "workspace.toolbar.text-palette"
+msgstr "טיפוגרפיות (%s)"
 
 #: src/app/main/ui/workspace/sidebar/history.cljs
 msgid "workspace.undo.empty"

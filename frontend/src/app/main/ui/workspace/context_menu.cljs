@@ -8,7 +8,9 @@
   "A workspace specific context menu (mouse right click)."
   (:require
    [app.common.data :as d]
+   [app.common.pages.helpers :as cph]
    [app.common.spec.page :as csp]
+   [app.main.data.events :as ev]
    [app.main.data.modal :as modal]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.interactions :as dwi]
@@ -34,9 +36,6 @@
   [event]
   (dom/prevent-default event)
   (dom/stop-propagation event))
-
-
-
 
 (mf/defc menu-entry
   [{:keys [title shortcut on-click children selected? icon] :as props}]
@@ -103,7 +102,8 @@
 (mf/defc context-menu-edit
   []
   (let [do-copy      (st/emitf (dw/copy-selected))
-        do-cut       (st/emitf (dw/copy-selected) dw/delete-selected)
+        do-cut       (st/emitf (dw/copy-selected)
+                               (dw/delete-selected))
         do-paste     (st/emitf dw/paste)
         do-duplicate (st/emitf (dw/duplicate-selected false))]
     [:*
@@ -166,6 +166,21 @@
                      :on-click do-flip-horizontal}]
      [:& menu-separator]]))
 
+(mf/defc context-menu-thumbnail
+  [{:keys [shapes]}]
+  (let [single?    (= (count shapes) 1)
+        has-frame? (some cph/frame-shape? shapes)
+        do-toggle-thumbnail (st/emitf (dw/toggle-file-thumbnail-selected))]
+    (when (and single? has-frame?)
+      [:*
+       (if (every? :use-for-thumbnail? shapes)
+         [:& menu-entry {:title (tr "workspace.shape.menu.thumbnail-remove")
+                         :on-click do-toggle-thumbnail}]
+         [:& menu-entry {:title (tr "workspace.shape.menu.thumbnail-set")
+                         :shortcut (sc/get-tooltip :thumbnail-set)
+                         :on-click do-toggle-thumbnail}])
+       [:& menu-separator]])))
+
 (mf/defc context-menu-group
   [{:keys [shapes]}]
 
@@ -210,9 +225,20 @@
      (when (not has-frame?)
        [:*
         [:& menu-entry {:title (tr "workspace.shape.menu.create-artboard-from-selection")
-                        :shortcut (sc/get-tooltip :create-artboard-from-selection)
+                        :shortcut (sc/get-tooltip :artboard-selection)
                         :on-click do-create-artboard-from-selection}]
         [:& menu-separator]])]))
+
+(mf/defc context-focus-mode-menu
+  [{:keys []}]
+  (let [focus (mf/deref refs/workspace-focus-selected)
+        do-toggle-focus-mode #(st/emit! (dw/toggle-focus-mode))]
+
+    [:& menu-entry {:title (if (empty? focus)
+                             (tr "workspace.focus.focus-on")
+                             (tr "workspace.focus.focus-off"))
+                    :shortcut (sc/get-tooltip :toggle-focus-mode)
+                    :on-click do-toggle-focus-mode}]))
 
 (mf/defc context-menu-path
   [{:keys [shapes disable-flatten? disable-booleans?]}]
@@ -369,12 +395,13 @@
                         :shortcut (sc/get-tooltip :create-component)
                         :on-click do-add-component}]
         (when has-component?
-          [:& menu-entry {:title (tr "workspace.shape.menu.detach-instances-in-bulk")
-                          :shortcut (sc/get-tooltip :detach-component)
-                          :on-click do-detach-component-in-bulk}]
-          (when (not single?)
-            [:& menu-entry {:title (tr "workspace.shape.menu.update-components-in-bulk")
-                            :on-click do-update-in-bulk}]))])
+          [:*
+           [:& menu-entry {:title (tr "workspace.shape.menu.detach-instances-in-bulk")
+                           :shortcut (sc/get-tooltip :detach-component)
+                           :on-click do-detach-component-in-bulk}]
+           (when (not single?)
+             [:& menu-entry {:title (tr "workspace.shape.menu.update-components-in-bulk")
+                             :on-click do-update-in-bulk}])])])
 
      (when is-component?
        ;; WARNING: this menu is the same as the context menu at the sidebar.
@@ -406,7 +433,7 @@
 
 (mf/defc context-menu-delete
   []
-  (let [do-delete (st/emitf dw/delete-selected)]
+  (let [do-delete (st/emitf (dw/delete-selected))]
     [:& menu-entry {:title (tr "workspace.shape.menu.delete")
                     :shortcut (sc/get-tooltip :delete)
                     :on-click do-delete}]))
@@ -427,7 +454,9 @@
        [:> context-menu-edit props]
        [:> context-menu-layer-position props]
        [:> context-menu-flip props]
+       [:> context-menu-thumbnail props]
        [:> context-menu-group props]
+       [:> context-focus-mode-menu props]
        [:> context-menu-path props]
        [:> context-menu-layer-options props]
        [:> context-menu-prototype props]
@@ -436,15 +465,23 @@
 
 (mf/defc viewport-context-menu
   []
-  (let [do-paste (st/emitf dw/paste)
-        do-hide-ui (st/emitf (dw/toggle-layout-flags :hide-ui))]
+  (let [focus      (mf/deref refs/workspace-focus-selected)
+        do-paste   #(st/emit! dw/paste)
+        do-hide-ui #(st/emit! (-> (dw/toggle-layout-flag :hide-ui)
+                                  (vary-meta assoc ::ev/origin "workspace-context-menu")))
+        do-toggle-focus-mode #(st/emit! (dw/toggle-focus-mode))]
     [:*
      [:& menu-entry {:title (tr "workspace.shape.menu.paste")
                      :shortcut (sc/get-tooltip :paste)
                      :on-click do-paste}]
      [:& menu-entry {:title (tr "workspace.shape.menu.hide-ui")
                      :shortcut (sc/get-tooltip :hide-ui)
-                     :on-click do-hide-ui}]]))
+                     :on-click do-hide-ui}]
+
+     (when (d/not-empty? focus)
+       [:& menu-entry {:title (tr "workspace.focus.focus-off")
+                       :shortcut (sc/get-tooltip :toggle-focus-mode)
+                       :on-click do-toggle-focus-mode}])]))
 
 (mf/defc context-menu
   []

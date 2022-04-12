@@ -52,10 +52,15 @@
           (reply [result]
             (post {:payload result}))
 
-          (reply-error [err]
-            (.error js/console "error" (pr-str err))
-            (post {:error {:data (ex-data err)
-                           :message (ex-message err)}}))
+          (reply-error [cause]
+            (if (map? cause)
+              (post {:error {:type :worker-error
+                             :code (or (:type cause) :wrapped)
+                             :data cause}})
+              (post {:error {:type :worker-error
+                             :code :unhandled-error
+                             :hint (ex-message cause)
+                             :data (ex-data cause)}})))
 
           (reply-completed
             ([] (reply-completed nil))

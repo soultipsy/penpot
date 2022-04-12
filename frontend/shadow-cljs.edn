@@ -15,9 +15,15 @@
 
    :modules
    {:shared {:entries []}
+
     :main {:entries [app.main]
            :depends-on #{:shared}
            :init-fn app.main/init}
+
+    :render {:entries [app.render]
+             :depends-on #{:shared}
+             :init-fn app.render/init}
+
     :worker {:entries [app.worker]
              :web-worker true
              :depends-on #{:shared}}}
@@ -58,6 +64,23 @@
      :elide-asserts true
      :anon-fn-naming-policy :off
      :source-map-detail-level :all}}}
+
+  :bench
+  {:target :node-script
+   :output-to "target/bench.js"
+   :output-dir "target/bench/"
+   :main cljs.user/main
+
+   :compiler-options
+   {:output-feature-set :es8
+    :output-wrapper false
+    :warnings {:fn-deprecated false}}
+
+   :release
+   {:compiler-options
+    {:fn-invoke-direct true
+     :elide-asserts true
+     :anon-fn-naming-policy :off}}}
 
   :test
   {:target :node-test

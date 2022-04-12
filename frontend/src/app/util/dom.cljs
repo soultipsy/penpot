@@ -6,13 +6,17 @@
 
 (ns app.util.dom
   (:require
-    [app.common.exceptions :as ex]
-    [app.common.geom.point :as gpt]
-    [app.util.globals :as globals]
-    [app.util.object :as obj]
-    [cuerdas.core :as str]
-    [goog.dom :as dom]
-    [promesa.core :as p]))
+   [app.common.data :as d]
+   [app.common.data.macros :as dm]
+   [app.common.geom.point :as gpt]
+   [app.common.logging :as log]
+   [app.util.globals :as globals]
+   [app.util.object :as obj]
+   [cuerdas.core :as str]
+   [goog.dom :as dom]
+   [promesa.core :as p]))
+
+(log/set-level! :warn)
 
 ;; --- Deprecated methods
 
@@ -33,31 +37,37 @@
 
 ;; --- New methods
 
+(declare get-elements-by-tag)
+
 (defn set-html-title
   [^string title]
   (set! (.-title globals/document) title))
 
-(defn set-page-style
-  [style]
-  (let [head (first (.getElementsByTagName ^js globals/document "head"))
-        style-str (str/join "\n"
-                            (map (fn [[k v]]
-                                   (str (name k) ": " v ";"))
-                                 style))]
-    (.insertAdjacentHTML head "beforeend"
-                         (str "<style>"
-                              "  @page {" style-str "}"
-                              "  html, body {"            ; Fix issue having Chromium to add random 1px margin at the bottom
-                              "    overflow: hidden;"     ; https://github.com/puppeteer/puppeteer/issues/2278#issuecomment-410381934
-                              "    font-size: 0;"
-                              "  }"
-                              "</style>"))))
+(defn set-page-style!
+  [styles]
+  (let [node  (first (get-elements-by-tag globals/document "head"))
+        style (reduce-kv (fn [res k v]
+                           (conj res (dm/str (str/css-selector k) ":" v ";")))
+                         []
+                         styles)
+        style (dm/str "<style>\n"
+                      "  @page {" (str/join " " style) "}\n "
+                      "  html, body {font-size:0; margin:0; padding:0}\n "
+                      "</style>")]
+    (.insertAdjacentHTML ^js node "beforeend" style)))
+
 
 (defn get-element-by-class
   ([classname]
    (dom/getElementByClass classname))
   ([classname node]
    (dom/getElementByClass classname node)))
+
+(defn get-elements-by-class
+  ([classname]
+   (dom/getElementsByClass classname))
+  ([classname node]
+   (dom/getElementsByClass classname node)))
 
 (defn get-element
   [id]
@@ -101,6 +111,15 @@
   [^js node]
   (when (some? node)
     (.-value node)))
+
+(defn get-input-value
+  "Extract the value from dom input node taking into account the type."
+  [^js node]
+  (when (some? node)
+    (if (or (= (.-type node) "checkbox")
+            (= (.-type node) "radio"))
+      (.-checked node)
+      (.-value node))))
 
 (defn get-attribute
   "Extract the value of one attribute of a dom node."
@@ -213,20 +232,20 @@
     (.-innerText el)))
 
 (defn query
-  ([^string query]
-   (query globals/document query))
+  ([^string selector]
+   (query globals/document selector))
 
-  ([^js el ^string query]
+  ([^js el ^string selector]
    (when (some? el)
-     (.querySelector el query))))
+     (.querySelector el selector))))
 
 (defn query-all
-  ([^string query]
-   (query-all globals/document query))
+  ([^string selector]
+   (query-all globals/document selector))
 
-  ([^js el ^string query]
+  ([^js el ^string selector]
    (when (some? el)
-     (.querySelectorAll el query))))
+     (.querySelectorAll el selector))))
 
 (defn get-client-position
   [^js event]
@@ -258,11 +277,12 @@
      :height (.-height ^js rect)}))
 
 (defn bounding-rect->rect
-  [{:keys [left top width height]}]
-  {:x left
-   :y top
-   :width width
-   :height height})
+  [rect]
+  (when (some? rect)
+    {:x      (or (.-left rect)   (:left rect))
+     :y      (or (.-top rect)    (:top rect))
+     :width  (or (.-width rect)  (:width rect))
+     :height (or (.-height rect) (:height rect))}))
 
 (defn get-window-size
   []
@@ -289,8 +309,9 @@
     (boolean (.-fullscreenElement globals/document))
 
     :else
-    (ex/raise :type :not-supported
-              :hint "seems like the current browser does not support fullscreen api.")))
+    (do
+      (log/error :msg "Seems like the current browser does not support fullscreen api.")
+      false)))
 
 (defn ^boolean blob?
   [^js v]
@@ -383,22 +404,23 @@
 (defn mtype->extension [mtype]
   ;; https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types
   (case mtype
-    "image/apng"         "apng"
-    "image/avif"         "avif"
-    "image/gif"          "gif"
-    "image/jpeg"         "jpg"
-    "image/png"          "png"
-    "image/svg+xml"      "svg"
-    "image/webp"         "webp"
-    "application/zip"    "zip"
-    "application/penpot" "penpot"
+    "image/apng"         ".apng"
+    "image/avif"         ".avif"
+    "image/gif"          ".gif"
+    "image/jpeg"         ".jpg"
+    "image/png"          ".png"
+    "image/svg+xml"      ".svg"
+    "image/webp"         ".webp"
+    "application/zip"    ".zip"
+    "application/penpot" ".penpot"
+    "application/pdf"    ".pdf"
     nil))
 
-(defn set-attribute [^js node ^string attr value]
+(defn set-attribute! [^js node ^string attr value]
   (when (some? node)
     (.setAttribute node attr value)))
 
-(defn remove-attribute [^js node ^string attr]
+(defn remove-attribute! [^js node ^string attr]
   (when (some? node)
     (.removeAttribute node attr)))
 
@@ -443,11 +465,11 @@
 
 (defn trigger-download-uri
   [filename mtype uri]
-  (let [link (create-element "a")
+  (let [link      (create-element "a")
         extension (mtype->extension mtype)
-        filename (if extension
-                   (str filename "." extension)
-                   filename)]
+        filename  (if (and extension (not (str/ends-with? filename extension)))
+                    (str/concat filename extension)
+                    filename)]
     (obj/set! link "href" uri)
     (obj/set! link "download" filename)
     (obj/set! (.-style ^js link) "display" "none")
@@ -509,3 +531,18 @@
       (when onfinish
         (set! (.-onfinish animation) onfinish)))))
 
+(defn is-child?
+  [^js node ^js candidate]
+  (and (some? node)
+       (some? candidate)
+       (.contains node candidate)))
+
+(defn seq-nodes
+  [root-node]
+  (letfn [(branch? [node]
+            (d/not-empty? (get-children node)))
+
+          (get-children [node]
+            (seq (.-children node)))]
+    (->> root-node
+         (tree-seq branch? get-children))))

@@ -19,7 +19,6 @@
    [app.main.ui.onboarding]
    [app.main.ui.onboarding.questions]
    [app.main.ui.releases]
-   [app.main.ui.render :as render]
    [app.main.ui.settings :as settings]
    [app.main.ui.static :as static]
    [app.main.ui.viewer :as viewer]
@@ -71,6 +70,7 @@
         :dashboard-fonts
         :dashboard-font-providers
         :dashboard-team-members
+        :dashboard-team-invitations
         :dashboard-team-settings)
 
        [:*
@@ -108,25 +108,6 @@
                                    :section section
                                    :index index
                                    :share-id share-id}]))
-
-       :render-object
-       (do
-         (let [file-id      (uuid (get-in route [:path-params :file-id]))
-               page-id      (uuid (get-in route [:path-params :page-id]))
-               object-id    (uuid (get-in route [:path-params :object-id]))
-               render-texts (get-in route [:query-params :render-texts])]
-           [:& render/render-object {:file-id file-id
-                                     :page-id page-id
-                                     :object-id object-id
-                                     :render-texts? (and (some? render-texts) (= render-texts "true"))}]))
-
-       :render-sprite
-       (do
-         (let [file-id      (uuid (get-in route [:path-params :file-id]))
-               component-id (get-in route [:query-params :component-id])
-               component-id (when (some? component-id) (uuid component-id))]
-           [:& render/render-sprite {:file-id file-id
-                                     :component-id component-id}]))
 
        :workspace
        (let [project-id (some-> params :path :project-id uuid)

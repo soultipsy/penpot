@@ -61,11 +61,11 @@
      ["/debug/icons-preview" :debug-icons-preview])
 
    ;; Used for export
-   ["/render-object/:file-id/:page-id/:object-id" :render-object]
    ["/render-sprite/:file-id" :render-sprite]
 
    ["/dashboard/team/:team-id"
     ["/members"              :dashboard-team-members]
+    ["/invitations"          :dashboard-team-invitations]
     ["/settings"             :dashboard-team-settings]
     ["/projects"             :dashboard-projects]
     ["/search"               :dashboard-search]

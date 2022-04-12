@@ -7,7 +7,6 @@
 (ns app.main.ui.workspace.sidebar.options.rows.color-row
   (:require
    [app.common.data :as d]
-   [app.common.math :as math]
    [app.common.pages :as cp]
    [app.main.data.modal :as modal]
    [app.main.refs :as refs]
@@ -15,6 +14,7 @@
    [app.main.ui.components.color-input :refer [color-input]]
    [app.main.ui.components.numeric-input :refer [numeric-input]]
    [app.main.ui.context :as ctx]
+   [app.main.ui.formats :as fmt]
    [app.main.ui.hooks :as h]
    [app.main.ui.icons :as i]
    [app.util.color :as uc]
@@ -46,7 +46,7 @@
                  :on-change handle-change-color
                  :on-close handle-close
                  :data color}]
-      (handle-open)
+      (handle-open color)
       (modal/show! :colorpicker props))))
 
 (defn opacity->string [opacity]
@@ -55,13 +55,15 @@
     (str (-> opacity
              (d/coalesce 1)
              (* 100)
-             (math/round)))))
+             (fmt/format-number)))))
 
 (defn remove-multiple [v]
   (if (= v :multiple) nil v))
 
 (mf/defc color-row
-  [{:keys [color disable-gradient disable-opacity on-change on-detach on-open on-close title]}]
+  [{:keys [index color disable-gradient disable-opacity on-change
+           on-reorder on-detach on-open on-close title on-remove
+           disable-drag select-all on-blur select-only]}]
   (let [current-file-id (mf/use-ctx ctx/current-file-id)
         file-colors     (mf/deref refs/workspace-file-colors)
         shared-libs     (mf/deref refs/workspace-libraries)
@@ -77,6 +79,9 @@
                       (-> color
                           (update :color #(or % (:value color)))))
 
+        detach-value (fn []
+                       (when on-detach (on-detach color)))
+
         change-value (fn [new-value]
                        (when on-change (on-change (-> color
                                                       (assoc :color new-value)
@@ -91,7 +96,11 @@
         handle-pick-color (fn [color]
                             (when on-change (on-change (merge uc/empty-color color))))
 
-        handle-open (fn [] (when on-open (on-open)))
+        handle-select (fn []
+                        (select-only color))
+
+        handle-open (fn [color]
+                      (when on-open (on-open (merge uc/empty-color color))))
 
         handle-close (fn [value opacity id file-id]
                        (when on-close (on-close value opacity id file-id)))
@@ -103,19 +112,29 @@
         handle-opacity-change (fn [value]
                                 (change-opacity (/ value 100)))
 
-        select-all (fn [event]
-                     (dom/select-text! (dom/get-target event)))
+        handle-click-color (color-picker-callback color
+                                                  disable-gradient
+                                                  disable-opacity
+                                                  handle-pick-color
+                                                  handle-open
+                                                  handle-close)
 
-        handle-click-color (mf/use-callback
-                            (mf/deps color)
-                            (color-picker-callback color
-                                                   disable-gradient
-                                                   disable-opacity
-                                                   handle-pick-color
-                                                   handle-open
-                                                   handle-close))
+        prev-color (h/use-previous color)
 
-        prev-color (h/use-previous color)]
+        on-drop
+        (fn [_ data]
+          (on-reorder (:index data)))
+
+        [dprops dref] (if (some? on-reorder)
+                        (h/use-sortable
+                         :data-type "penpot/color-row"
+                         :on-drop on-drop
+                         :disabled @disable-drag
+                         :detect-center? false
+                         :data {:id (str "color-row-" index)
+                                :index index
+                                :name (str "Color row" index)})
+                        [nil nil])]
 
     (mf/use-effect
      (mf/deps color prev-color)
@@ -123,7 +142,11 @@
        (when (not= prev-color color)
          (modal/update-props! :colorpicker {:data (parse-color color)}))))
 
-    [:div.row-flex.color-data {:title title}
+    [:div.row-flex.color-data {:title title
+                               :class (dom/classnames
+                                       :dnd-over-top (= (:over dprops) :top)
+                                       :dnd-over-bot (= (:over dprops) :bot))
+                               :ref dref}
      [:& cb/color-bullet {:color color
                           :on-click handle-click-color}]
 
@@ -137,15 +160,24 @@
           [:div.element-set-actions-button
            {:on-mouse-enter #(reset! hover-detach true)
             :on-mouse-leave #(reset! hover-detach false)
-            :on-click on-detach}
-           (if @hover-detach i/unchain i/chain)])]
+            :on-click detach-value}
+           (if @hover-detach i/unchain i/chain)])
+
+        (when select-only
+          [:div.element-set-actions-button {:on-click handle-select}
+           i/pointer-inner])]
 
        ;; Rendering a gradient
        (and (not (uc/multiple? color))
             (:gradient color)
             (get-in color [:gradient :type]))
-       [:div.color-info
-        [:div.color-name (cb/gradient-type->string (get-in color [:gradient :type]))]]
+       [:*
+        [:div.color-info
+         [:div.color-name (cb/gradient-type->string (get-in color [:gradient :type]))]]
+        (when select-only
+          [:div.element-set-actions-button {:on-click handle-select}
+           i/pointer-inner])]
+  
 
        ;; Rendering a plain color/opacity
        :else
@@ -156,6 +188,7 @@
                                    (-> color :color uc/remove-hash))
                           :placeholder (tr "settings.multiple")
                           :on-click select-all
+                          :on-blur on-blur
                           :on-change handle-value-change}]]
 
         (when (and (not disable-opacity)
@@ -165,7 +198,13 @@
            [:> numeric-input {:value (-> color :opacity opacity->string)
                               :placeholder (tr "settings.multiple")
                               :on-click select-all
+                              :on-blur on-blur
                               :on-change handle-opacity-change
                               :min 0
-                              :max 100}]])])]))
+                              :max 100}]])
+        (when select-only
+          [:div.element-set-actions-button {:on-click handle-select}
+           i/pointer-inner])])
+     (when (some? on-remove)
+       [:div.element-set-actions-button.remove {:on-click on-remove} i/minus])]))
 

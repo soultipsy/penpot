@@ -8,22 +8,26 @@
   (:require
    [app.common.data :as d]
    [app.common.exceptions :as ex]
+   [app.common.logging :as l]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.db :as db]
    [app.emails :as eml]
+   [app.loggers.audit :as audit]
    [app.media :as media]
    [app.rpc.mutations.projects :as projects]
    [app.rpc.permissions :as perms]
    [app.rpc.queries.profile :as profile]
    [app.rpc.queries.teams :as teams]
+   [app.rpc.rlimit :as rlimit]
    [app.storage :as sto]
-   [app.util.rlimit :as rlimit]
    [app.util.services :as sv]
    [app.util.time :as dt]
    [clojure.spec.alpha :as s]
-   [datoteka.core :as fs]))
+   [cuerdas.core :as str]
+   [promesa.core :as p]
+   [promesa.exec :as px]))
 
 ;; --- Helpers & Specs
 
@@ -275,54 +279,73 @@
 
       nil)))
 
-
 ;; --- Mutation: Update Team Photo
 
-(declare upload-photo)
+(declare ^:private upload-photo)
+(declare ^:private update-team-photo)
 
-(s/def ::content-type ::media/image-content-type)
-(s/def ::file (s/and ::media/upload (s/keys :req-un [::content-type])))
-
+(s/def ::file ::media/upload)
 (s/def ::update-team-photo
   (s/keys :req-un [::profile-id ::team-id ::file]))
 
 (sv/defmethod ::update-team-photo
   {::rlimit/permits (cf/get :rlimit-image)}
-  [{:keys [pool storage] :as cfg} {:keys [profile-id file team-id] :as params}]
-  (db/with-atomic [conn pool]
-    (teams/check-edition-permissions! conn profile-id team-id)
-    (media/validate-media-type (:content-type file) #{"image/jpeg" "image/png" "image/webp"})
-    (media/run {:cmd :info :input {:path (:tempfile file)
-                                   :mtype (:content-type file)}})
+  [cfg {:keys [file] :as params}]
+  ;; Validate incoming mime type
+  (media/validate-media-type! file #{"image/jpeg" "image/png" "image/webp"})
+  (let [cfg (update cfg :storage media/configure-assets-storage)]
+    (update-team-photo cfg params)))
 
-    (let [team    (teams/retrieve-team conn profile-id team-id)
-          storage (media/configure-assets-storage storage conn)
-          cfg     (assoc cfg :storage storage)
-          photo   (upload-photo cfg params)]
+(defn update-team-photo
+  [{:keys [pool storage executors] :as cfg} {:keys [profile-id team-id] :as params}]
+  (p/let [team  (px/with-dispatch (:default executors)
+                  (teams/retrieve-team pool profile-id team-id))
+          photo (upload-photo cfg params)]
 
-      ;; Schedule deletion of old photo
-      (when-let [id (:photo-id team)]
-        (sto/del-object storage id))
+    ;; Mark object as touched for make it ellegible for tentative
+    ;; garbage collection.
+    (when-let [id (:photo-id team)]
+      (sto/touch-object! storage id))
 
-      ;; Save new photo
-      (db/update! conn :team
-                  {:photo-id (:id photo)}
-                  {:id team-id})
+    ;; Save new photo
+    (db/update! pool :team
+                {:photo-id (:id photo)}
+                {:id team-id})
 
-      (assoc team :photo-id (:id photo)))))
+    (assoc team :photo-id (:id photo))))
 
 (defn upload-photo
-  [{:keys [storage] :as cfg} {:keys [file]}]
-  (let [thumb (media/run {:cmd :profile-thumbnail
+  [{:keys [storage executors] :as cfg} {:keys [file]}]
+  (letfn [(get-info [content]
+            (px/with-dispatch (:blocking executors)
+              (media/run {:cmd :info :input content})))
+
+          (generate-thumbnail [info]
+            (px/with-dispatch (:blocking executors)
+              (media/run {:cmd :profile-thumbnail
                           :format :jpeg
                           :quality 85
                           :width 256
                           :height 256
-                          :input {:path (fs/path (:tempfile file))
-                                  :mtype (:content-type file)}})]
-    (sto/put-object storage
-                    {:content (sto/content (:data thumb) (:size thumb))
-                     :content-type (:mtype thumb)})))
+                          :input info})))
+
+          ;; Function responsible of calculating cryptographyc hash of
+          ;; the provided data. Even though it uses the hight
+          ;; performance BLAKE2b algorithm, we prefer to schedule it
+          ;; to be executed on the blocking executor.
+          (calculate-hash [data]
+            (px/with-dispatch (:blocking executors)
+              (sto/calculate-hash data)))]
+
+    (p/let [info    (get-info file)
+            thumb   (generate-thumbnail info)
+            hash    (calculate-hash (:data thumb))
+            content (-> (sto/content (:data thumb) (:size thumb))
+                        (sto/wrap-with-hash hash))]
+      (sto/put-object! storage {::sto/content content
+                                ::sto/deduplicate? true
+                                :bucket "profile"
+                                :content-type (:mtype thumb)}))))
 
 
 ;; --- Mutation: Invite Member
@@ -330,15 +353,20 @@
 (declare create-team-invitation)
 
 (s/def ::email ::us/email)
+(s/def ::emails ::us/set-of-emails)
 (s/def ::invite-team-member
-  (s/keys :req-un [::profile-id ::team-id ::email ::role]))
+  (s/keys :req-un [::profile-id ::team-id ::role]
+          :opt-un [::email ::emails]))
 
 (sv/defmethod ::invite-team-member
-  [{:keys [pool] :as cfg} {:keys [profile-id team-id email role] :as params}]
+  "A rpc call that allow to send a single or multiple invitations to
+  join the team."
+  [{:keys [pool] :as cfg} {:keys [profile-id team-id email emails role] :as params}]
   (db/with-atomic [conn pool]
     (let [perms    (teams/get-permissions conn profile-id team-id)
           profile  (db/get-by-id conn :profile profile-id)
-          team     (db/get-by-id conn :team team-id)]
+          team     (db/get-by-id conn :team team-id)
+          emails   (cond-> (or emails #{}) (string? email) (conj email))]
 
       (when-not (:is-admin perms)
         (ex/raise :type :validation
@@ -350,41 +378,59 @@
                   :code :profile-is-muted
                   :hint "looks like the profile has reported repeatedly as spam or has permanent bounces"))
 
-      (create-team-invitation
-       (assoc cfg
-              :email email
-              :conn conn
-              :team team
-              :profile profile
-              :role role))
-      nil)))
+      (doseq [email emails]
+        (create-team-invitation
+         (assoc cfg
+                :email email
+                :conn conn
+                :team team
+                :profile profile
+                :role role))
+        )
+
+      (with-meta {}
+        {::audit/props {:invitations (count emails)}}))))
+
+(def sql:upsert-team-invitation
+  "insert into team_invitation(team_id, email_to, role, valid_until)
+   values (?, ?, ?, ?)
+       on conflict(team_id, email_to) do
+          update set role = ?, valid_until = ?, updated_at = now();")
 
 (defn- create-team-invitation
   [{:keys [conn tokens team profile role email] :as cfg}]
-  (let [member   (profile/retrieve-profile-data-by-email conn email)
-        itoken   (tokens :generate
-                         {:iss :team-invitation
-                          :exp (dt/in-future "48h")
-                          :profile-id (:id profile)
-                          :role role
-                          :team-id (:id team)
-                          :member-email (:email member email)
-                          :member-id (:id member)})
-        ptoken   (tokens :generate-predefined
-                         {:iss :profile-identity
-                          :profile-id (:id profile)})]
+  (let [member    (profile/retrieve-profile-data-by-email conn email)
+        token-exp (dt/in-future "48h")
+        itoken    (tokens :generate
+                          {:iss :team-invitation
+                           :exp token-exp
+                           :profile-id (:id profile)
+                           :role role
+                           :team-id (:id team)
+                           :member-email (:email member email)
+                           :member-id (:id member)})
+        ptoken    (tokens :generate-predefined
+                          {:iss :profile-identity
+                           :profile-id (:id profile)})]
+
+    (when (contains? cf/flags :log-invitation-tokens)
+      (l/trace :hint "invitation token" :token itoken))
 
     (when (and member (not (eml/allow-send-emails? conn member)))
       (ex/raise :type :validation
                 :code :member-is-muted
+                :email email
                 :hint "looks like the profile has reported repeatedly as spam or has permanent bounces"))
 
-    ;; Secondly check if the invited member email is part of the
-    ;; global spam/bounce report.
+    ;; Secondly check if the invited member email is part of the global spam/bounce report.
     (when (eml/has-bounce-reports? conn email)
       (ex/raise :type :validation
                 :code :email-has-permanent-bounces
+                :email email
                 :hint "looks like the email you invite has been repeatedly reported as spam or permanent bounce"))
+
+    (db/exec-one! conn [sql:upsert-team-invitation
+                        (:id team) (str/lower email) (name role) token-exp (name role) token-exp])
 
     (eml/send! {::eml/conn conn
                 ::eml/factory eml/invite-to-team
@@ -395,7 +441,6 @@
                 :token itoken
                 :extra-data ptoken})))
 
-
 ;; --- Mutation: Create Team & Invite Members
 
 (s/def ::emails ::us/set-of-emails)
@@ -405,8 +450,9 @@
 (sv/defmethod ::create-team-and-invite-members
   [{:keys [pool] :as cfg} {:keys [profile-id emails role] :as params}]
   (db/with-atomic [conn pool]
-    (let [team    (create-team conn params)
-          profile (db/get-by-id conn :profile profile-id)]
+    (let [team     (create-team conn params)
+          audit-fn (:audit cfg)
+          profile  (db/get-by-id conn :profile profile-id)]
 
       ;; Create invitations for all provided emails.
       (doseq [email emails]
@@ -417,4 +463,53 @@
                 :profile profile
                 :email email
                 :role role)))
-      team)))
+
+      (with-meta team
+        {::audit/props {:invitations (count emails)}
+
+         :before-complete
+         #(audit-fn :cmd :submit
+                    :type "mutation"
+                    :name "invite-team-member"
+                    :profile-id profile-id
+                    :props {:emails emails
+                            :role role
+                            :profile-id profile-id
+                            :invitations (count emails)})}))))
+
+;; --- Mutation: Update invitation role
+
+(s/def ::update-team-invitation-role
+  (s/keys :req-un [::profile-id ::team-id ::email ::role]))
+
+(sv/defmethod ::update-team-invitation-role
+  [{:keys [pool] :as cfg} {:keys [profile-id team-id email role] :as params}]
+  (db/with-atomic [conn pool]
+    (let [perms    (teams/get-permissions conn profile-id team-id)]
+
+      (when-not (:is-admin perms)
+        (ex/raise :type :validation
+                  :code :insufficient-permissions))
+
+      (db/update! conn :team-invitation
+                  {:role (name role) :updated-at (dt/now)}
+                  {:team-id team-id :email-to (str/lower email)})
+      nil)))
+
+;; --- Mutation: Delete invitation
+
+(s/def ::delete-team-invitation
+  (s/keys :req-un [::profile-id ::team-id ::email]))
+
+(sv/defmethod ::delete-team-invitation
+  [{:keys [pool] :as cfg} {:keys [profile-id team-id email] :as params}]
+  (db/with-atomic [conn pool]
+    (let [perms    (teams/get-permissions conn profile-id team-id)]
+
+      (when-not (:is-admin perms)
+        (ex/raise :type :validation
+                  :code :insufficient-permissions))
+
+      (db/delete! conn :team-invitation
+                {:team-id team-id :email-to (str/lower email)})
+      nil)))

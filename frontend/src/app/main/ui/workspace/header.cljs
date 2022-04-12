@@ -7,10 +7,9 @@
 (ns app.main.ui.workspace.header
   (:require
    [app.common.data :as d]
-   [app.common.math :as mth]
    [app.config :as cf]
    [app.main.data.events :as ev]
-   [app.main.data.messages :as dm]
+   [app.main.data.exports :as de]
    [app.main.data.modal :as modal]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.shortcuts :as sc]
@@ -18,6 +17,8 @@
    [app.main.repo :as rp]
    [app.main.store :as st]
    [app.main.ui.components.dropdown :refer [dropdown]]
+   [app.main.ui.export :refer [export-progress-widget]]
+   [app.main.ui.formats :as fmt]
    [app.main.ui.hooks.resize :as r]
    [app.main.ui.icons :as i]
    [app.main.ui.workspace.presence :refer [active-sessions]]
@@ -30,10 +31,11 @@
    [potok.core :as ptk]
    [rumext.alpha :as mf]))
 
-;; --- Zoom Widget
 
 (def workspace-persistence-ref
   (l/derived :workspace-persistence st/state))
+
+;; --- Persistence state Widget
 
 (mf/defc persistence-state-widget
   {::mf/wrap [mf/memo]}
@@ -60,6 +62,8 @@
         [:span.icon i/msg-warning]
         [:span.label (tr "workspace.header.save-error")]])]))
 
+;; --- Zoom Widget
+
 (mf/defc zoom-widget-workspace
   {::mf/wrap [mf/memo]}
   [{:keys [zoom
@@ -71,7 +75,7 @@
     :as props}]
   (let [show-dropdown? (mf/use-state false)]
     [:div.zoom-widget {:on-click #(reset! show-dropdown? true)}
-     [:span.label {} (str (mth/round (* 100 zoom)) "%")]
+     [:span.label (fmt/format-percent zoom {:precision 0})]
      [:span.icon i/arrow-down]
      [:& dropdown {:show @show-dropdown?
                    :on-close #(reset! show-dropdown? false)}
@@ -82,7 +86,7 @@
                                (dom/stop-propagation event)
                                (dom/prevent-default event)
                                (on-decrease))} "-"]
-         [:p.zoom-size {} (str (mth/round (* 100 zoom)) "%")]
+         [:p.zoom-size {} (fmt/format-percent zoom {:precision 0})]
          [:button {:on-click (fn [event]
                                (dom/stop-propagation event)
                                (dom/prevent-default event)
@@ -99,7 +103,7 @@
 ;; --- Header Users
 
 (mf/defc menu
-  [{:keys [layout project file team-id page-id] :as props}]
+  [{:keys [layout project file team-id] :as props}]
   (let [show-menu?     (mf/use-state false)
         show-sub-menu? (mf/use-state false)
         editing?       (mf/use-state false)
@@ -150,6 +154,11 @@
                              (dom/prevent-default event)
                              (reset! editing? true))
 
+        on-export-shapes
+        (mf/use-callback
+         (fn [_]
+           (st/emit! (de/show-workspace-export-dialog))))
+
         on-export-file
         (mf/use-callback
          (mf/deps file team-id)
@@ -177,29 +186,27 @@
         (mf/use-callback
          (mf/deps file frames)
          (fn [_]
-           (when (seq frames)
-             (let [filename  (str (:name file) ".pdf")
-                   frame-ids (mapv :id frames)]
-               (st/emit! (dm/info (tr "workspace.options.exporting-object")
-                                  {:timeout nil}))
-               (->> (rp/query! :export-frames
-                               {:name     (:name file)
-                                :file-id  (:id file)
-                                :page-id   page-id
-                                :frame-ids frame-ids})
-                    (rx/subs
-                     (fn [body]
-                       (dom/trigger-download filename body))
-                     (fn [_error]
-                       (st/emit! (dm/error (tr "errors.unexpected-error"))))
-                     (st/emitf dm/hide)))))))
+           (st/emit! (de/show-workspace-export-frames-dialog (reverse frames)))))
+
+        on-item-hover
+        (mf/use-callback
+         (fn [item]
+           (fn [event]
+             (dom/stop-propagation event)
+             (reset! show-sub-menu? item))))
 
         on-item-click
         (mf/use-callback
          (fn [item]
            (fn [event]
              (dom/stop-propagation event)
-             (reset! show-sub-menu? item))))]
+             (reset! show-sub-menu? item))))
+
+        toggle-flag
+        (mf/use-callback
+         (fn [flag]
+           (-> (dw/toggle-layout-flag flag)
+               (vary-meta assoc ::ev/origin "workspace-menu"))))]
 
     (mf/use-effect
      (mf/deps @editing?)
@@ -230,18 +237,22 @@
      [:& dropdown {:show @show-menu?
                    :on-close #(reset! show-menu? false)}
       [:ul.menu
-       [:li {:on-click (on-item-click :file)}
+       [:li {:on-click (on-item-click :file)
+             :on-pointer-enter (on-item-hover :file)}
         [:span (tr "workspace.header.menu.option.file")]
         [:span i/arrow-slide]]
-       [:li {:on-click (on-item-click :edit)}
+       [:li {:on-click (on-item-click :edit)
+             :on-pointer-enter (on-item-hover :edit)}
         [:span (tr "workspace.header.menu.option.edit")] [:span i/arrow-slide]]
-       [:li {:on-click (on-item-click :view)}
+       [:li {:on-click (on-item-click :view)
+             :on-pointer-enter (on-item-hover :view)}
         [:span (tr "workspace.header.menu.option.view")] [:span i/arrow-slide]]
-       [:li {:on-click (on-item-click :preferences)}
+       [:li {:on-click (on-item-click :preferences)
+             :on-pointer-enter (on-item-hover :preferences)}
         [:span (tr "workspace.header.menu.option.preferences")] [:span i/arrow-slide]]
        (when (contains? @cf/flags :user-feedback)
          [:*
-          [:li.feedback {:on-click (st/emitf (rt/nav :settings-feedback))}
+          [:li.feedback {:on-click (st/emitf (rt/nav-new-window* {:rname :settings-feedback}))}
            [:span (tr "labels.give-feedback")]]])]]
 
      [:& dropdown {:show (= @show-sub-menu? :file)
@@ -252,6 +263,9 @@
           [:span (tr "dashboard.remove-shared")]]
          [:li {:on-click on-add-shared}
           [:span (tr "dashboard.add-shared")]])
+       [:li.export-file {:on-click on-export-shapes}
+        [:span (tr "dashboard.export-shapes")]
+        [:span.shortcut (sc/get-tooltip :export-shapes)]]
        [:li.export-file {:on-click on-export-file}
         [:span (tr "dashboard.export-single")]]
        (when (seq frames)
@@ -264,7 +278,7 @@
        [:li {:on-click #(st/emit! (dw/select-all))}
         [:span (tr "workspace.header.menu.select-all")]
         [:span.shortcut (sc/get-tooltip :select-all)]]
-       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :scale-text))}
+       [:li {:on-click #(st/emit! (toggle-flag :scale-text))}
         [:span
          (if (contains? layout :scale-text)
            (tr "workspace.header.menu.disable-scale-text")
@@ -274,21 +288,22 @@
      [:& dropdown {:show (= @show-sub-menu? :view)
                    :on-close #(reset! show-sub-menu? false)}
       [:ul.sub-menu.view
-       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :rules))}
+       [:li {:on-click #(st/emit! (toggle-flag :rules))}
         [:span
          (if (contains? layout :rules)
            (tr "workspace.header.menu.hide-rules")
            (tr "workspace.header.menu.show-rules"))]
         [:span.shortcut (sc/get-tooltip :toggle-rules)]]
 
-       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :display-grid))}
+       [:li {:on-click #(st/emit! (toggle-flag :display-grid))}
         [:span
          (if (contains? layout :display-grid)
            (tr "workspace.header.menu.hide-grid")
            (tr "workspace.header.menu.show-grid"))]
         [:span.shortcut (sc/get-tooltip :toggle-grid)]]
 
-       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :sitemap :layers))}
+       [:li {:on-click #(st/emit! (toggle-flag :sitemap)
+                                  (toggle-flag :layers))}
         [:span
          (if (or (contains? layout :sitemap) (contains? layout :layers))
            (tr "workspace.header.menu.hide-layers")
@@ -297,8 +312,8 @@
 
        [:li {:on-click (fn []
                          (r/set-resize-type! :bottom)
-                         (st/emit! (dw/remove-layout-flags :textpalette)
-                                   (dw/toggle-layout-flags :colorpalette)))}
+                         (st/emit! (dw/remove-layout-flag :textpalette)
+                                   (toggle-flag :colorpalette)))}
         [:span
          (if (contains? layout :colorpalette)
            (tr "workspace.header.menu.hide-palette")
@@ -307,28 +322,36 @@
 
        [:li {:on-click (fn []
                          (r/set-resize-type! :bottom)
-                         (st/emit! (dw/remove-layout-flags :colorpalette)
-                                   (dw/toggle-layout-flags :textpalette)))}
+                         (st/emit! (dw/remove-layout-flag :colorpalette)
+                                   (toggle-flag :textpalette)))}
         [:span
          (if (contains? layout :textpalette)
            (tr "workspace.header.menu.hide-textpalette")
            (tr "workspace.header.menu.show-textpalette"))]
         [:span.shortcut (sc/get-tooltip :toggle-textpalette)]]
 
-       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :assets))}
+       [:li {:on-click #(st/emit! (toggle-flag :assets))}
         [:span
          (if (contains? layout :assets)
            (tr "workspace.header.menu.hide-assets")
            (tr "workspace.header.menu.show-assets"))]
         [:span.shortcut (sc/get-tooltip :toggle-assets)]]
 
-       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :display-artboard-names))}
+       [:li {:on-click #(st/emit! (toggle-flag :display-artboard-names))}
         [:span
          (if (contains? layout :display-artboard-names)
            (tr "workspace.header.menu.hide-artboard-names")
            (tr "workspace.header.menu.show-artboard-names"))]]
 
-       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :hide-ui))}
+       [:li {:on-click #(st/emit! (toggle-flag :show-pixel-grid))}
+        [:span
+         (if (contains? layout :show-pixel-grid)
+           (tr "workspace.header.menu.hide-pixel-grid")
+           (tr "workspace.header.menu.show-pixel-grid"))]
+        [:span.shortcut (sc/get-tooltip :show-pixel-grid)]]
+
+       [:li {:on-click #(st/emit! (-> (toggle-flag :hide-ui)
+                                      (vary-meta assoc ::ev/origin "workspace-menu")))}
         [:span
          (tr "workspace.shape.menu.hide-ui")]
         [:span.shortcut (sc/get-tooltip :hide-ui)]]]]
@@ -336,26 +359,33 @@
      [:& dropdown {:show (= @show-sub-menu? :preferences)
                    :on-close #(reset! show-sub-menu? false)}
       [:ul.sub-menu.preferences
-       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :snap-guides))}
+       [:li {:on-click #(st/emit! (toggle-flag :snap-guides))}
         [:span
          (if (contains? layout :snap-guides)
            (tr "workspace.header.menu.disable-snap-guides")
            (tr "workspace.header.menu.enable-snap-guides"))]
         [:span.shortcut (sc/get-tooltip :toggle-snap-guide)]]
 
-       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :snap-grid))}
+       [:li {:on-click #(st/emit! (toggle-flag :snap-grid))}
         [:span
          (if (contains? layout :snap-grid)
            (tr "workspace.header.menu.disable-snap-grid")
            (tr "workspace.header.menu.enable-snap-grid"))]
         [:span.shortcut (sc/get-tooltip :toggle-snap-grid)]]
 
-       [:li {:on-click #(st/emit! (dw/toggle-layout-flags :dynamic-alignment))}
+       [:li {:on-click #(st/emit! (toggle-flag :dynamic-alignment))}
         [:span
          (if (contains? layout :dynamic-alignment)
            (tr "workspace.header.menu.disable-dynamic-alignment")
            (tr "workspace.header.menu.enable-dynamic-alignment"))]
         [:span.shortcut (sc/get-tooltip :toggle-alignment)]]
+
+       [:li {:on-click #(st/emit! (toggle-flag :snap-pixel-grid))}
+        [:span
+         (if (contains? layout :snap-pixel-grid)
+           (tr "workspace.header.menu.disable-snap-pixel-grid")
+           (tr "workspace.header.menu.enable-snap-pixel-grid"))]
+        [:span.shortcut (sc/get-tooltip :snap-pixel-grid)]]
 
        [:li {:on-click #(st/emit! (modal/show {:type :nudge-option}))}
         [:span (tr "modals.nudge-title")]]]]]))
@@ -364,9 +394,9 @@
 
 (mf/defc header
   [{:keys [file layout project page-id] :as props}]
-  (let [team-id  (:team-id project)
-        zoom     (mf/deref refs/selected-zoom)
-        params   {:page-id page-id :file-id (:id file) :section "interactions"}
+  (let [team-id             (:team-id project)
+        zoom                (mf/deref refs/selected-zoom)
+        params              {:page-id page-id :file-id (:id file) :section "interactions"}
 
         go-back
         (mf/use-callback
@@ -396,10 +426,12 @@
      [:div.right-area
       [:div.options-section
        [:& persistence-state-widget]
+       [:& export-progress-widget]
        [:button.document-history
         {:alt (tr "workspace.sidebar.history" (sc/get-tooltip :toggle-history))
          :class (when (contains? layout :document-history) "selected")
-         :on-click (st/emitf (dw/toggle-layout-flags :document-history))}
+         :on-click #(st/emit! (-> (dw/toggle-layout-flag :document-history)
+                                  (vary-meta assoc ::ev/origin "workspace-header")))}
         i/recent]]
 
       [:div.options-section

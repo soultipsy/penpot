@@ -16,6 +16,7 @@
    ;; because of some strange interaction with cljs.spec.alpha and
    ;; modules splitting.
    [app.common.exceptions :as ex]
+   [app.common.uri :as u]
    [app.common.uuid :as uuid]
    [cuerdas.core :as str]
    [expound.alpha :as expound]))
@@ -96,6 +97,7 @@
     :else
     ::s/invalid))
 
+
 ;; --- Default Specs
 
 (s/def ::keyword (s/conformer keyword-conformer name))
@@ -140,35 +142,39 @@
 
 ;; --- SPEC: set of Keywords
 
-(s/def ::set-of-keywords
-  (s/conformer
-   (fn [s]
-     (let [xform (comp
-                  (map (fn [s]
-                         (cond
-                           (string? s) (keyword s)
-                           (keyword? s) s
-                           :else nil)))
-                  (filter identity))]
-       (cond
-         (set? s)    (into #{} xform s)
-         (string? s) (into #{} xform (str/words s))
-         :else       ::s/invalid)))
-   (fn [s]
-     (str/join " " (map name s)))))
+(letfn [(conform-fn [dest s]
+          (let [xform (keep (fn [s]
+                              (cond
+                                (string? s) (keyword s)
+                                (keyword? s) s
+                                :else nil)))]
+            (cond
+              (set? s)    (into dest xform s)
+              (string? s) (into dest xform (str/words s))
+              :else       ::s/invalid)))]
+
+  (s/def ::set-of-keywords
+    (s/conformer
+     (fn [s] (conform-fn #{} s))
+     (fn [s] (str/join " " (map name s)))))
+
+  (s/def ::vec-of-keywords
+    (s/conformer
+     (fn [s] (conform-fn [] s))
+     (fn [s] (str/join " " (map name s))))))
 
 ;; --- SPEC: email
 
 (def email-re #"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
 
+(defn parse-email
+  [s]
+  (some->> s (re-seq email-re) first))
+
 (s/def ::email
   (s/conformer
    (fn [v]
-     (if (string? v)
-       (if-let [matches (re-seq email-re v)]
-         (first matches)
-         (do ::s/invalid))
-       ::s/invalid))
+     (or (parse-email v) ::s/invalid))
    str))
 
 (s/def ::set-of-emails
@@ -187,6 +193,15 @@
 
    (fn [v]
      (str/join " " v))))
+
+(s/def ::uri
+  (s/conformer
+   (fn [s]
+     (cond
+       (u/uri? s) s
+       (string? s) (u/uri s)
+       :else ::s/invalid))
+   str))
 
 ;; --- SPEC: set-of-str
 

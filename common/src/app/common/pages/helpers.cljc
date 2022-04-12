@@ -17,24 +17,28 @@
 ;; GENERIC SHAPE SELECTORS AND PREDICATES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn ^boolean root-frame?
+(defn root-frame?
   [{:keys [id type]}]
   (and (= type :frame)
        (= id uuid/zero)))
 
-(defn ^boolean frame-shape?
+(defn frame-shape?
   [{:keys [type]}]
   (= type :frame))
 
-(defn ^boolean group-shape?
+(defn group-shape?
   [{:keys [type]}]
   (= type :group))
 
-(defn ^boolean text-shape?
+(defn text-shape?
   [{:keys [type]}]
   (= type :text))
 
-(defn ^boolean unframed-shape?
+(defn image-shape?
+  [{:keys [type]}]
+  (= type :image))
+
+(defn unframed-shape?
   "Checks if it's a non-frame shape in the top level."
   [shape]
   (and (not (frame-shape? shape))
@@ -73,6 +77,16 @@
   "Retrieve the id of the parent for the shape-id (if exists)"
   [objects id]
   (-> objects (get id) :parent-id))
+
+(defn get-parents-seq
+  [objects shape-id]
+
+  (cond
+    (nil? shape-id)
+    nil
+
+    :else
+    (lazy-seq (cons shape-id (get-parents-seq objects (get-in objects [shape-id :parent-id]))))))
 
 (defn get-parent-ids
   "Returns a vector of parents of the specified shape."
@@ -184,15 +198,6 @@
              (conj done (:id current))
              (concat (rest pending) (:shapes current))))))
 
-(defn get-index-in-parent
-  "Retrieves the index in the parent"
-  [objects shape-id]
-  (let [shape (get objects shape-id)
-        parent (get objects (:parent-id shape))
-        [parent-idx _] (d/seek (fn [[_idx child-id]] (= child-id shape-id))
-                               (d/enumerate (:shapes parent)))]
-    parent-idx))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; COMPONENTS HELPERS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -213,7 +218,7 @@
   ([libraries library-id component-id]
    (get-in libraries [library-id :data :components component-id])))
 
-(defn ^boolean is-main-of?
+(defn is-main-of?
   [shape-main shape-inst]
   (and (:shape-ref shape-inst)
        (or (= (:shape-ref shape-inst) (:id shape-main))
@@ -243,8 +248,7 @@
     shape
 
     (some? (:shape-ref shape))
-    (recur (get objects (:parent-id shape))
-           objects)))
+    (recur objects (get objects (:parent-id shape)))))
 
 (defn make-container
   [page-or-component type]
@@ -307,7 +311,6 @@
 (defn clean-loops
   "Clean a list of ids from circular references."
   [objects ids]
-
   (let [parent-selected?
         (fn [id]
           (let [parents (get-parent-ids objects id)]
@@ -464,3 +467,4 @@
   [path name]
   (let [path-split (split-path path)]
     (merge-path-item (first path-split) name)))
+

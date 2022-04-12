@@ -8,6 +8,7 @@
   (:require
    [app.common.uuid :as uuid]
    [app.db :as db]
+   [app.db.sql :as sql]
    [app.http :as http]
    [app.storage :as sto]
    [app.test-helpers :as th]
@@ -117,11 +118,11 @@
           (t/is (= 0 (count result))))))
     ))
 
-(t/deftest file-media-gc-task
+(t/deftest file-gc-task
   (letfn [(create-file-media-object [{:keys [profile-id file-id]}]
             (let [mfile  {:filename "sample.jpg"
-                          :tempfile (th/tempfile "app/test_files/sample.jpg")
-                          :content-type "image/jpeg"
+                          :path (th/tempfile "app/test_files/sample.jpg")
+                          :mtype "image/jpeg"
                           :size 312043}
                   params {::th/type :upload-file-media-object
                           :profile-id profile-id
@@ -130,6 +131,9 @@
                           :name "testfile"
                           :content mfile}
                   out    (th/mutation! params)]
+
+              ;; (th/print-result! out)
+
               (t/is (nil? (:error out)))
               (:result out)))
 
@@ -174,8 +178,22 @@
                             :type :image
                             :metadata {:id (:id fmo1)}}}]})]
 
+      ;; Check that reference storage objets on filemediaobjects
+      ;; are the same because of deduplication feature.
+      (t/is (= (:media-id fmo1) (:media-id fmo2)))
+      (t/is (= (:thumbnail-id fmo1) (:thumbnail-id fmo2)))
+
+      ;; If we launch gc-touched-task, we should have 2 items to
+      ;; freeze because of the deduplication (we have uploaded 2 times
+      ;; 2 two same files).
+      (let [task (:app.storage/gc-touched-task th/*system*)
+            res  (task {})]
+
+        (t/is (= 2 (:freeze res)))
+        (t/is (= 0 (:delete res))))
+
       ;; run the task immediately
-      (let [task  (:app.tasks.file-media-gc/handler th/*system*)
+      (let [task  (:app.tasks.file-gc/handler th/*system*)
             res   (task {})]
         (t/is (= 0 (:processed res))))
 
@@ -184,7 +202,7 @@
       (th/sleep 300)
 
       ;; run the task again
-      (let [task  (:app.tasks.file-media-gc/handler th/*system*)
+      (let [task  (:app.tasks.file-gc/handler th/*system*)
             res   (task {})]
         (t/is (= 1 (:processed res))))
 
@@ -197,21 +215,26 @@
         (t/is (= 1 (count rows))))
 
       ;; The underlying storage objects are still available.
-      (t/is (some? (sto/get-object storage (:media-id fmo2))))
-      (t/is (some? (sto/get-object storage (:thumbnail-id fmo2))))
-      (t/is (some? (sto/get-object storage (:media-id fmo1))))
-      (t/is (some? (sto/get-object storage (:thumbnail-id fmo1))))
+      (t/is (some? @(sto/get-object storage (:media-id fmo2))))
+      (t/is (some? @(sto/get-object storage (:thumbnail-id fmo2))))
+      (t/is (some? @(sto/get-object storage (:media-id fmo1))))
+      (t/is (some? @(sto/get-object storage (:thumbnail-id fmo1))))
 
-      ;; but if we pass the touched gc task two of them should disappear
+      ;; now, we have deleted the unused file-media-object, if we
+      ;; execute the touched-gc task, we should see that two of them
+      ;; are marked to be deleted.
       (let [task (:app.storage/gc-touched-task th/*system*)
             res  (task {})]
-        (t/is (= 0 (:freeze res)))
-        (t/is (= 2 (:delete res)))
+        (t/is (= 2 (:freeze res)))
+        (t/is (= 0 (:delete res))))
 
-        (t/is (nil? (sto/get-object storage (:media-id fmo2))))
-        (t/is (nil? (sto/get-object storage (:thumbnail-id fmo2))))
-        (t/is (some? (sto/get-object storage (:media-id fmo1))))
-        (t/is (some? (sto/get-object storage (:thumbnail-id fmo1)))))
+      ;; Finally, check that some of the objects that are marked as
+      ;; deleted we are unable to retrieve them using standard storage
+      ;; public api.
+      (t/is (some? @(sto/get-object storage (:media-id fmo2))))
+      (t/is (some? @(sto/get-object storage (:thumbnail-id fmo2))))
+      (t/is (some? @(sto/get-object storage (:media-id fmo1))))
+      (t/is (some? @(sto/get-object storage (:thumbnail-id fmo1))))
 
       )))
 
@@ -323,7 +346,7 @@
       (t/is (th/ex-info? error))
       (t/is (th/ex-of-type? error :not-found))))
 
-(t/deftest deletion-test
+(t/deftest deletion
   (let [task     (:app.tasks.objects-gc/handler th/*system*)
         profile1 (th/create-profile* 1)
         file     (th/create-file* 1 {:project-id (:default-project-id profile1)
@@ -390,72 +413,301 @@
         (t/is (= (:type error-data) :not-found))))
     ))
 
-(t/deftest query-frame-thumbnails
-  (let [prof  (th/create-profile* 1 {:is-active true})
-        file  (th/create-file* 1 {:profile-id (:id prof)
-                                  :project-id (:default-project-id prof)
-                                  :is-shared false})
-        data {::th/type :file-frame-thumbnail
-              :profile-id (:id prof)
-              :file-id (:id file)
-              :frame-id (uuid/next)}]
 
-    ;;insert an entry on the database with a test value for the thumbnail of this frame
-    (db/exec-one! th/*pool*
-                  ["insert into file_frame_thumbnail(file_id, frame_id, data) values (?, ?, ?)"
-                   (:file-id data) (:frame-id data) "testvalue"])
-
-    (let [out (th/query! data)]
-      (t/is (nil? (:error out)))
-      (let [result (:result out)]
-        (t/is (= 1 (count result)))
-        (t/is (= "testvalue" (:data result)))))))
-
-(t/deftest insert-frame-thumbnails
-  (let [prof    (th/create-profile* 1 {:is-active true})
-        file    (th/create-file* 1 {:profile-id (:id prof)
-                                    :project-id (:default-project-id prof)
-                                    :is-shared false})
-        data {::th/type :upsert-frame-thumbnail
-              :profile-id (:id prof)
-              :file-id (:id file)
-              :frame-id (uuid/next)
-              :data "test insert new value"}
-        out  (th/mutation! data)]
-
-        (t/is (nil? (:error out)))
-        (t/is (nil? (:result out)))
-
-        ;;retrieve the value from the database and check its content
-        (let [result (db/exec-one!
-                      th/*pool*
-                      ["select data from file_frame_thumbnail where file_id = ? and frame_id = ?"
-                       (:file-id data) (:frame-id data)])]
-          (t/is (= "test insert new value" (:data result))))))
-
-(t/deftest frame-thumbnails
+(t/deftest object-thumbnails-ops
   (let [prof (th/create-profile* 1 {:is-active true})
         file (th/create-file* 1 {:profile-id (:id prof)
                                  :project-id (:default-project-id prof)
                                  :is-shared false})
-        data {::th/type :upsert-frame-thumbnail
+        page-id   (get-in file [:data :pages 0])
+        frame1-id (uuid/next)
+        shape1-id (uuid/next)
+        frame2-id (uuid/next)
+        shape2-id (uuid/next)
+
+        changes   [{:type :add-obj
+                   :page-id page-id
+                   :id frame1-id
+                   :parent-id uuid/zero
+                   :frame-id uuid/zero
+                   :obj {:id frame1-id
+                         :use-for-thumbnail? true
+                         :name "test-frame1"
+                         :type :frame}}
+                  {:type :add-obj
+                   :page-id page-id
+                   :id shape1-id
+                   :parent-id frame1-id
+                   :frame-id frame1-id
+                   :obj {:id shape1-id
+                         :name "test-shape1"
+                         :type :rect}}
+                  {:type :add-obj
+                   :page-id page-id
+                   :id frame2-id
+                   :parent-id uuid/zero
+                   :frame-id uuid/zero
+                   :obj {:id frame2-id
+                         :name "test-frame2"
+                         :type :frame}}
+                  {:type :add-obj
+                   :page-id page-id
+                   :id shape2-id
+                   :parent-id frame2-id
+                   :frame-id frame2-id
+                   :obj {:id shape2-id
+                         :name "test-shape2"
+                         :type :rect}}]]
+    ;; Update the file
+    (th/update-file* {:file-id (:id file)
+                      :profile-id (:id prof)
+                      :revn 0
+                      :changes changes})
+
+    (t/testing "RPC page query (rendering purposes)"
+
+      ;; Query :page RPC method without passing page-id
+      (let [data {::th/type :page
+                  :profile-id (:id prof)
+                  :file-id (:id file)}
+            {:keys [error result] :as out} (th/query! data)]
+
+        ;; (th/print-result! out)
+        (t/is (map? result))
+        (t/is (contains? result :objects))
+        (t/is (contains? (:objects result) frame1-id))
+        (t/is (contains? (:objects result) shape1-id))
+        (t/is (contains? (:objects result) frame2-id))
+        (t/is (contains? (:objects result) shape2-id))
+        (t/is (contains? (:objects result) uuid/zero)))
+
+      ;; Query :page RPC method with page-id
+      (let [data {::th/type :page
+                  :profile-id (:id prof)
+                  :file-id (:id file)
+                  :page-id page-id}
+            {:keys [error result] :as out} (th/query! data)]
+        ;; (th/print-result! out)
+        (t/is (map? result))
+        (t/is (contains? result :objects))
+        (t/is (contains? (:objects result) frame1-id))
+        (t/is (contains? (:objects result) shape1-id))
+        (t/is (contains? (:objects result) frame2-id))
+        (t/is (contains? (:objects result) shape2-id))
+        (t/is (contains? (:objects result) uuid/zero)))
+
+      ;; Query :page RPC method with page-id and object-id
+      (let [data {::th/type :page
+                  :profile-id (:id prof)
+                  :file-id (:id file)
+                  :page-id page-id
+                  :object-id frame1-id}
+            {:keys [error result] :as out} (th/query! data)]
+        ;; (th/print-result! out)
+        (t/is (map? result))
+        (t/is (contains? result :objects))
+        (t/is (contains? (:objects result) frame1-id))
+        (t/is (contains? (:objects result) shape1-id))
+        (t/is (not (contains? (:objects result) uuid/zero)))
+        (t/is (not (contains? (:objects result) frame2-id)))
+        (t/is (not (contains? (:objects result) shape2-id))))
+
+      ;; Query :page RPC method with wrong params
+      (let [data {::th/type :page
+                  :profile-id (:id prof)
+                  :file-id (:id file)
+                  :object-id frame1-id}
+            {:keys [error result] :as out} (th/query! data)]
+        ;; (th/print-result! out)
+        (t/is (= :validation (th/ex-type error)))
+        (t/is (= :spec-validation (th/ex-code error)))))
+
+    (t/testing "RPC :file-data-for-thumbnail"
+      ;; Insert a thumbnail data for the frame-id
+      (let [data {::th/type :upsert-file-object-thumbnail
+                  :profile-id (:id prof)
+                  :file-id (:id file)
+                  :object-id frame1-id
+                  :data "random-data-1"}
+
+            {:keys [error result] :as out} (th/mutation! data)]
+        (t/is (nil? error))
+        (t/is (nil? result)))
+
+      ;; Check the result
+      (let [data {::th/type :file-data-for-thumbnail
+                  :profile-id (:id prof)
+                  :file-id (:id file)}
+            {:keys [error result] :as out} (th/query! data)]
+        ;; (th/print-result! out)
+        (t/is (map? result))
+        (t/is (contains? result :page))
+        (t/is (contains? result :revn))
+        (t/is (contains? result :file-id))
+
+        (t/is (= (:id file) (:file-id result)))
+        (t/is (= "random-data-1" (get-in result [:page :objects frame1-id :thumbnail])))
+        (t/is (= [] (get-in result [:page :objects frame1-id :shapes]))))
+
+      ;; Delete thumbnail data
+      (let [data {::th/type :upsert-file-object-thumbnail
+                  :profile-id (:id prof)
+                  :file-id (:id file)
+                  :object-id frame1-id
+                  :data nil}
+            {:keys [error result] :as out} (th/mutation! data)]
+        (t/is (nil? error))
+        (t/is (nil? result)))
+
+      ;; Check the result
+      (let [data {::th/type :file-data-for-thumbnail
+                  :profile-id (:id prof)
+                  :file-id (:id file)}
+            {:keys [error result] :as out} (th/query! data)]
+        ;; (th/print-result! out)
+        (t/is (map? result))
+        (t/is (contains? result :page))
+        (t/is (contains? result :revn))
+        (t/is (contains? result :file-id))
+        (t/is (= (:id file) (:file-id result)))
+        (t/is (nil? (get-in result [:page :objects frame1-id :thumbnail])))
+        (t/is (not= [] (get-in result [:page :objects frame1-id :shapes])))))
+
+    (t/testing "TASK :file-gc"
+
+      ;; insert object snapshot for known frame
+      (let [data {::th/type :upsert-file-object-thumbnail
+                  :profile-id (:id prof)
+                  :file-id (:id file)
+                  :object-id frame1-id
+                  :data "new-data"}
+            {:keys [error result] :as out} (th/mutation! data)]
+        (t/is (nil? error))
+        (t/is (nil? result)))
+
+      ;; Wait to file be ellegible for GC
+      (th/sleep 300)
+
+      ;; run the task again
+      (let [task  (:app.tasks.file-gc/handler th/*system*)
+            res   (task {})]
+        (t/is (= 1 (:processed res))))
+
+      ;; check that object thumbnails are still here
+      (let [res (th/db-exec! ["select * from file_object_thumbnail"])]
+        (t/is (= 1 (count res)))
+        (t/is (= "new-data" (get-in res [0 :data]))))
+
+      ;; insert object snapshot for for unknown frame
+      (let [data {::th/type :upsert-file-object-thumbnail
+                  :profile-id (:id prof)
+                  :file-id (:id file)
+                  :object-id (uuid/next)
+                  :data "new-data-2"}
+            {:keys [error result] :as out} (th/mutation! data)]
+        (t/is (nil? error))
+        (t/is (nil? result)))
+
+      ;; Mark file as modified
+      (th/db-exec! ["update file set has_media_trimmed=false where id=?" (:id file)])
+
+      ;; check that we have all object thumbnails
+      (let [res (th/db-exec! ["select * from file_object_thumbnail"])]
+        (t/is (= 2 (count res))))
+
+      ;; run the task again
+      (let [task  (:app.tasks.file-gc/handler th/*system*)
+            res   (task {})]
+        (t/is (= 1 (:processed res))))
+
+      ;; check that the unknown frame thumbnail is deleted
+      (let [res (th/db-exec! ["select * from file_object_thumbnail"])]
+        (t/is (= 1 (count res)))
+        (t/is (= "new-data" (get-in res [0 :data])))))))
+
+
+(t/deftest file-thumbnail-ops
+  (let [prof (th/create-profile* 1 {:is-active true})
+        file (th/create-file* 1 {:profile-id (:id prof)
+                                 :project-id (:default-project-id prof)
+                                 :revn 2
+                                 :is-shared false})
+        data {::th/type :file-thumbnail
               :profile-id (:id prof)
-              :file-id (:id file)
-              :frame-id (uuid/next)
-              :data "updated value"}]
+              :file-id (:id file)}]
 
-    ;;insert an entry on the database with and old value for the thumbnail of this frame
-    (db/exec-one! th/*pool*
-                  ["insert into file_frame_thumbnail(file_id, frame_id, data) values (?, ?, ?)"
-                   (:file-id data) (:frame-id data) "old value"])
+    (t/testing "query a thumbnail with single revn"
 
-    (let [out (th/mutation! data)]
-      (t/is (nil? (:error out)))
-      (t/is (nil? (:result out)))
+      ;; insert an entry on the database with a test value for the thumbnail of this frame
+      (th/db-insert! :file-thumbnail
+                     {:file-id (:file-id data)
+                      :revn 1
+                      :data "testvalue1"})
 
-      ;;retrieve the value from the database and check its content
-      (let [result (db/exec-one!
-                    th/*pool*
-                    ["select data from file_frame_thumbnail where file_id = ? and frame_id = ?"
-                     (:file-id data) (:frame-id data)])]
-        (t/is (= "updated value" (:data result)))))))
+      (let [{:keys [result error] :as out} (th/query! data)]
+        ;; (th/print-result! out)
+        (t/is (nil? error))
+        (t/is (= 4 (count result)))
+        (t/is (= "testvalue1" (:data result)))
+        (t/is (= 1 (:revn result)))))
+
+    (t/testing "query thumbnail with two revisions"
+      ;; insert an entry on the database with a test value for the thumbnail of this frame
+      (th/db-insert! :file-thumbnail
+                     {:file-id (:file-id data)
+                      :revn 2
+                      :data "testvalue2"})
+
+      (let [{:keys [result error] :as out} (th/query! data)]
+        ;; (th/print-result! out)
+        (t/is (nil? error))
+        (t/is (= 4 (count result)))
+        (t/is (= "testvalue2" (:data result)))
+        (t/is (= 2 (:revn result))))
+
+      ;; Then query the specific revn
+      (let [{:keys [result error] :as out} (th/query! (assoc data :revn 1))]
+        ;; (th/print-result! out)
+        (t/is (nil? error))
+        (t/is (= 4 (count result)))
+        (t/is (= "testvalue1" (:data result)))
+        (t/is (= 1 (:revn result)))))
+
+    (t/testing "upsert file-thumbnail"
+      (let [data {::th/type :upsert-file-thumbnail
+                  :profile-id (:id prof)
+                  :file-id (:id file)
+                  :data "foobar"
+                  :props {:baz 1}
+                  :revn 2}
+            {:keys [result error] :as out} (th/mutation! data)]
+        ;; (th/print-result! out)
+        (t/is (nil? error))
+        (t/is (nil? result))))
+
+    (t/testing "query last result"
+      (let [{:keys [result error] :as out} (th/query! data)]
+        ;; (th/print-result! out)
+        (t/is (nil? error))
+        (t/is (= 4 (count result)))
+        (t/is (= "foobar" (:data result)))
+        (t/is (= {:baz 1} (:props result)))
+        (t/is (= 2 (:revn result)))))
+
+    (t/testing "gc task"
+      ;; make the file eligible for GC waiting 300ms (configured
+      ;; timeout for testing)
+      (th/sleep 300)
+
+      ;; run the task again
+      (let [task  (:app.tasks.file-gc/handler th/*system*)
+            res   (task {})]
+        (t/is (= 1 (:processed res))))
+
+      ;; Then query the specific revn
+      (let [{:keys [result error] :as out} (th/query! (assoc data :revn 1))]
+        (t/is (= :not-found (th/ex-type error)))
+        (t/is (= :file-thumbnail-not-found (th/ex-code error)))))
+    ))
+
+

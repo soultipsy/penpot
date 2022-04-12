@@ -8,6 +8,7 @@
   "A collection of derived refs."
   (:require
    [app.common.data :as d]
+   [app.common.data.macros :as dm]
    [app.common.geom.shapes :as gsh]
    [app.common.pages.helpers :as cph]
    [app.common.path.commands :as upc]
@@ -41,6 +42,9 @@
 (def share-links
   (l/derived :share-links st/state))
 
+(def export
+  (l/derived :export st/state))
+
 ;; ---- Dashboard refs
 
 (def dashboard-local
@@ -67,14 +71,17 @@
 (def dashboard-team-members
   (l/derived :dashboard-team-members st/state))
 
+(def dashboard-team-invitations
+  (l/derived :dashboard-team-invitations st/state))
+
 (def dashboard-selected-project
   (l/derived (fn [state]
-               (get-in state [:dashboard-local :selected-project]))
+               (dm/get-in state [:dashboard-local :selected-project]))
              st/state))
 
 (def dashboard-selected-files
   (l/derived (fn [state]
-               (let [get-file #(get-in state [:dashboard-files %])
+               (let [get-file #(dm/get-in state [:dashboard-files %])
                      sim-file #(select-keys % [:id :name :project-id :is-shared])
                      selected (get-in state [:dashboard-local :selected-files])
                      xform    (comp (map get-file)
@@ -88,50 +95,54 @@
 (def workspace-local
   (l/derived :workspace-local st/state))
 
+(def workspace-global
+  (l/derived :workspace-global st/state))
+
 (def workspace-drawing
   (l/derived :workspace-drawing st/state))
 
+;; TODO: rename to workspace-selected (?)
+;; Don't use directly from components, this is a proxy to improve performance of selected-shapes
+(def ^:private selected-shapes-data
+  (l/derived
+   (fn [state]
+     (let [objects  (wsh/lookup-page-objects state)
+           selected (dm/get-in state [:workspace-local :selected])]
+       {:objects objects :selected selected}))
+   st/state (fn [v1 v2]
+              (and (identical? (:objects v1) (:objects v2))
+                   (= (:selected v1) (:selected v2))))))
+
 (def selected-shapes
-  (l/derived wsh/lookup-selected st/state =))
+  (l/derived
+   (fn [{:keys [objects selected]}]
+     (wsh/process-selected-shapes objects selected))
+   selected-shapes-data))
 
 (defn make-selected-ref
   [id]
   (l/derived #(contains? % id) selected-shapes))
 
-(def viewport-data
-  (l/derived #(select-keys % [:options-mode
-                              :zoom
-                              :vport
-                              :vbox
-                              :edition
-                              :edit-path
-                              :tooltip
-                              :panning
-                              :zooming
-                              :picking-color?
-                              :transform
-                              :hover
-                              :modifiers
-                              :selrect
-                              :show-distances?])
-             workspace-local =))
+(def export-in-progress?
+  (l/derived :export-in-progress? export))
 
-(def interactions-data
-  (l/derived #(select-keys % [:editing-interaction-index
-                              :draw-interaction-to
-                              :draw-interaction-to-frame
-                              :move-overlay-to
-                              :move-overlay-index])
-             workspace-local =))
+(def export-error?
+  (l/derived :export-error? export))
 
-(def typography-data
-  (l/derived #(select-keys % [:rename-typography
-                              :edit-typography])
-             workspace-local =))
+(def export-progress
+  (l/derived :export-progress export))
 
-(def local-displacement
-  (l/derived #(select-keys % [:modifiers :selected])
-             workspace-local =))
+(def exports
+  (l/derived :exports export))
+
+(def export-detail-visibililty
+  (l/derived :export-detail-visibililty export))
+
+(def export-widget-visibililty
+  (l/derived :export-widget-visibililty export))
+
+(def export-health
+  (l/derived :export-health export))
 
 (def selected-zoom
   (l/derived :zoom workspace-local))
@@ -164,15 +175,16 @@
   (l/derived :hover-ids context-menu))
 
 (def selected-assets
-  (l/derived :selected-assets workspace-local))
+  (l/derived :selected-assets workspace-global))
 
 (def workspace-layout
   (l/derived :workspace-layout st/state))
 
-(def current-file-id
-  (l/derived :current-file-id st/state))
+(def snap-pixel?
+  (l/derived #(contains? % :snap-pixel-grid) workspace-layout))
 
 (def workspace-file
+  "A ref to a striped vision of file (without data)."
   (l/derived (fn [state]
                (let [file (:workspace-file state)
                      data (:workspace-data state)]
@@ -190,12 +202,12 @@
 
 (def workspace-recent-colors
   (l/derived (fn [state]
-               (get-in state [:workspace-data :recent-colors] []))
+               (dm/get-in state [:workspace-data :recent-colors] []))
              st/state))
 
 (def workspace-recent-fonts
   (l/derived (fn [state]
-               (get-in state [:workspace-data :recent-fonts] []))
+               (dm/get-in state [:workspace-data :recent-fonts] []))
              st/state))
 
 (def workspace-file-typography
@@ -212,7 +224,7 @@
 
 (def workspace-local-library
   (l/derived (fn [state]
-               (select-keys (get state :workspace-data)
+               (select-keys (:workspace-data state)
                             [:id
                              :colors
                              :media
@@ -233,7 +245,7 @@
   (l/derived (fn [state]
                (let [page-id (:current-page-id state)
                      data    (:workspace-data state)]
-                 (get-in data [:pages-index page-id])))
+                 (dm/get-in data [:pages-index page-id])))
              st/state))
 
 (def workspace-page-objects
@@ -260,15 +272,11 @@
 
 (defn objects-by-id
   [ids]
-  (let [selector
-        (fn [state]
-          (let [objects (wsh/lookup-page-objects state)]
-            (into [] (keep (d/getf objects)) ids)))]
-    (l/derived selector st/state =)))
+  (l/derived #(into [] (keep (d/getf %)) ids) workspace-page-objects))
 
 (defn- set-content-modifiers [state]
   (fn [id shape]
-    (let [content-modifiers (get-in state [:workspace-local :edit-path id :content-modifiers])]
+    (let [content-modifiers (dm/get-in state [:workspace-local :edit-path id :content-modifiers])]
       (if (some? content-modifiers)
         (update shape :content upc/apply-content-modifiers content-modifiers)
         shape))))
@@ -314,6 +322,9 @@
               (mapv (d/getf objects) shapes)))]
     (l/derived selector selected-data =)))
 
+(def workspace-focus-selected
+  (l/derived :workspace-focus-selected st/state))
+
 ;; ---- Viewer refs
 
 (def viewer-file
@@ -340,7 +351,7 @@
 (def users
   (l/derived :users st/state))
 
-(def fullscreen?
-  (l/derived  (fn [state]
-                (get-in state [:viewer-local :fullscreen?] []))
-              st/state))
+(def viewer-fullscreen?
+  (l/derived (fn [state]
+               (dm/get-in state [:viewer-local :fullscreen?]))
+             st/state))

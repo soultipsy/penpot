@@ -15,13 +15,15 @@
    [app.db :as db]
    [app.loggers.audit :as audit]
    [app.rpc.queries.profile :as profile]
-   [app.util.http :as http]
+   [app.util.json :as json]
    [app.util.time :as dt]
-   [clojure.data.json :as json]
    [clojure.set :as set]
    [clojure.spec.alpha :as s]
    [cuerdas.core :as str]
-   [integrant.core :as ig]))
+   [integrant.core :as ig]
+   [promesa.core :as p]
+   [promesa.exec :as px]
+   [yetti.response :as yrs]))
 
 (defn- build-redirect-uri
   [{:keys [provider] :as cfg}]
@@ -40,27 +42,6 @@
         (assoc :query query)
         (str))))
 
-(defn retrieve-access-token
-  [{:keys [provider] :as cfg} code]
-  (try
-    (let [params {:client_id (:client-id provider)
-                  :client_secret (:client-secret provider)
-                  :code code
-                  :grant_type "authorization_code"
-                  :redirect_uri (build-redirect-uri cfg)}
-          req    {:method :post
-                  :headers {"content-type" "application/x-www-form-urlencoded"}
-                  :uri (:token-uri provider)
-                  :body (u/map->query-string params)}
-          res    (http/send! req)]
-      (when (= 200 (:status res))
-        (let [data (json/read-str (:body res))]
-          {:token (get data "access_token")
-           :type  (get data "token_type")})))
-    (catch Exception e
-      (l/warn :hint "unexpected error on retrieve-access-token" :cause e)
-      nil)))
-
 (defn- qualify-props
   [provider props]
   (reduce-kv (fn [result k v]
@@ -68,31 +49,82 @@
              {}
              props))
 
-(defn- retrieve-user-info
-  [{:keys [provider] :as cfg} tdata]
-  (try
-    (let [req {:uri (:user-uri provider)
-               :headers {"Authorization" (str (:type tdata) " " (:token tdata))}
-               :timeout 6000
-               :method :get}
-          res (http/send! req)]
+(defn retrieve-access-token
+  [{:keys [provider http-client] :as cfg} code]
+  (let [params {:client_id (:client-id provider)
+                :client_secret (:client-secret provider)
+                :code code
+                :grant_type "authorization_code"
+                :redirect_uri (build-redirect-uri cfg)}
+        req    {:method :post
+                :headers {"content-type" "application/x-www-form-urlencoded"
+                          "accept" "application/json"}
+                :uri (:token-uri provider)
+                :body (u/map->query-string params)}]
+    (p/then
+     (http-client req)
+     (fn [{:keys [status body] :as res}]
+       (if (= status 200)
+         (let [data (json/read body)]
+           {:token (get data :access_token)
+            :type (get data :token_type)})
+         (ex/raise :type :internal
+                   :code :unable-to-retrieve-token
+                   :http-status status
+                   :http-body body))))))
 
-      (when (= 200 (:status res))
-        (let [info (json/read-str (:body res) :key-fn keyword)]
-          {:backend (:name provider)
-           :email (:email info)
-           :fullname (:name info)
-           :props (->> (dissoc info :name :email)
-                       (qualify-props provider))})))
-    (catch Exception e
-      (l/warn :hint "unexpected exception on retrieve-user-info" :cause e)
-      nil)))
+(defn- retrieve-user-info
+  [{:keys [provider http-client] :as cfg} tdata]
+  (letfn [(retrieve []
+            (http-client {:uri (:user-uri provider)
+                          :headers {"Authorization" (str (:type tdata) " " (:token tdata))}
+                          :timeout 6000
+                          :method :get}))
+
+          (validate-response [{:keys [status body] :as res}]
+            (when-not (= 200 status)
+              (ex/raise :type :internal
+                        :code :unable-to-retrieve-user-info
+                        :hint "unable to retrieve user info"
+                        :http-status status
+                        :http-body body))
+            res)
+
+          (get-email [info]
+            (let [attr-kw (cf/get :oidc-email-attr :email)]
+              (get info attr-kw)))
+
+          (get-name [info]
+            (let [attr-kw (cf/get :oidc-name-attr :name)]
+              (get info attr-kw)))
+
+          (process-response [{:keys [body]}]
+            (let [info (json/read body)]
+              {:backend  (:name provider)
+               :email    (get-email info)
+               :fullname (get-name info)
+               :props (->> (dissoc info :name :email)
+                           (qualify-props provider))}))
+
+          (validate-info [info]
+            (when-not (s/valid? ::info info)
+              (l/warn :hint "received incomplete profile info object (please set correct scopes)"
+                      :info (pr-str info))
+              (ex/raise :type :internal
+                        :code :incomplete-user-info
+                        :hint "inconmplete user info"
+                        :info info))
+            info)]
+
+    (-> (retrieve)
+        (p/then' validate-response)
+        (p/then' process-response)
+        (p/then' validate-info))))
 
 (s/def ::backend ::us/not-empty-string)
 (s/def ::email ::us/not-empty-string)
 (s/def ::fullname ::us/not-empty-string)
 (s/def ::props (s/map-of ::us/keyword any?))
-
 (s/def ::info
   (s/keys :req-un [::backend
                    ::email
@@ -100,73 +132,66 @@
                    ::props]))
 
 (defn retrieve-info
-  [{:keys [tokens provider] :as cfg} request]
-  (let [state  (get-in request [:params :state])
-        state  (tokens :verify {:token state :iss :oauth})
-        info   (some->> (get-in request [:params :code])
-                        (retrieve-access-token cfg)
-                        (retrieve-user-info cfg))]
+  [{:keys [tokens provider] :as cfg} {:keys [params] :as request}]
+  (letfn [(validate-oidc [info]
+            ;; If the provider is OIDC, we can proceed to check
+            ;; roles if they are defined.
+            (when (and (= "oidc" (:name provider))
+                       (seq (:roles provider)))
+              (let [provider-roles (into #{} (:roles provider))
+                    profile-roles  (let [attr  (cf/get :oidc-roles-attr :roles)
+                                         roles (get info attr)]
+                                     (cond
+                                       (string? roles) (into #{} (str/words roles))
+                                       (vector? roles) (into #{} roles)
+                                       :else #{}))]
 
-    (when-not (s/valid? ::info info)
-      (l/warn :hint "received incomplete profile info object (please set correct scopes)"
-              :info (pr-str info))
+                ;; check if profile has a configured set of roles
+                (when-not (set/subset? provider-roles profile-roles)
+                  (ex/raise :type :internal
+                            :code :unable-to-auth
+                            :hint "not enough permissions"))))
+            info)
+
+          (post-process [state info]
+            (cond-> info
+              (some? (:invitation-token state))
+              (assoc :invitation-token (:invitation-token state))
+
+              ;; If state token comes with props, merge them. The state token
+              ;; props can contain pm_ and utm_ prefixed query params.
+              (map? (:props state))
+              (update :props merge (:props state))))]
+
+    (when-let [error (get params :error)]
       (ex/raise :type :internal
-                :code :unable-to-auth
-                :hint "no user info"))
+                :code :error-on-retrieving-code
+                :error-id error
+                :error-desc (get params :error_description)))
 
-    ;; If the provider is OIDC, we can proceed to check
-    ;; roles if they are defined.
-    (when (and (= "oidc" (:name provider))
-               (seq (:roles provider)))
-      (let [provider-roles (into #{} (:roles provider))
-            profile-roles  (let [attr  (cf/get :oidc-roles-attr :roles)
-                                 roles (get info attr)]
-                             (cond
-                               (string? roles) (into #{} (str/words roles))
-                               (vector? roles) (into #{} roles)
-                               :else #{}))]
-
-        ;; check if profile has a configured set of roles
-        (when-not (set/subset? provider-roles profile-roles)
-          (ex/raise :type :internal
-                    :code :unable-to-auth
-                    :hint "not enough permissions"))))
-
-    (cond-> info
-      (some? (:invitation-token state))
-      (assoc :invitation-token (:invitation-token state))
-
-      ;; If state token comes with props, merge them. The state token
-      ;; props can contain pm_ and utm_ prefixed query params.
-      (map? (:props state))
-      (update :props merge (:props state)))))
+    (let [state  (get params :state)
+          code   (get params :code)
+          state  (tokens :verify {:token state :iss :oauth})]
+      (-> (p/resolved code)
+          (p/then #(retrieve-access-token cfg %))
+          (p/then #(retrieve-user-info cfg %))
+          (p/then' validate-oidc)
+          (p/then' (partial post-process state))))))
 
 ;; --- HTTP HANDLERS
 
-(defn extract-utm-props
-  "Extracts additional data from user params."
-  [params]
-  (reduce-kv (fn [params k v]
-               (let [sk (name k)]
-                 (cond-> params
-                   (str/starts-with? sk "utm_")
-                   (assoc (->> sk str/kebab (keyword "penpot")) v))))
-             {}
-             params))
-
 (defn- retrieve-profile
-  [{:keys [pool] :as cfg} info]
-  (with-open [conn (db/open pool)]
-    (some->> (:email info)
-             (profile/retrieve-profile-data-by-email conn)
-             (profile/populate-additional-data conn)
-             (profile/decode-profile-row))))
+  [{:keys [pool executor] :as cfg} info]
+  (px/with-dispatch executor
+    (with-open [conn (db/open pool)]
+      (some->> (:email info)
+               (profile/retrieve-profile-data-by-email conn)
+               (profile/populate-additional-data conn)
+               (profile/decode-profile-row)))))
 
 (defn- redirect-response
   [uri]
-  {:status 302
-   :headers {"location" (str uri)}
-   :body ""})
+  (yrs/response :status 302 :headers {"location" (str uri)}))
 
 (defn- generate-error-redirect
   [cfg error]
@@ -199,6 +224,7 @@
 
       (->> (redirect-response uri)
            (sxf request)))
+
     (let [info   (assoc info
                         :iss :prepared-register
                         :is-active true
@@ -213,28 +239,33 @@
       (redirect-response uri))))
 
 (defn- auth-handler
-  [{:keys [tokens] :as cfg} {:keys [params] :as request}]
-  (let [invitation (:invitation-token params)
-        props      (extract-utm-props params)
-        state      (tokens :generate
-                           {:iss :oauth
-                            :invitation-token invitation
-                            :props props
-                            :exp (dt/in-future "15m")})
-        uri        (build-auth-uri cfg state)]
-    {:status 200
-     :body {:redirect-uri uri}}))
+  [{:keys [tokens] :as cfg} {:keys [params] :as request} respond raise]
+  (try
+    (let [props (audit/extract-utm-params params)
+          state (tokens :generate
+                        {:iss :oauth
+                         :invitation-token (:invitation-token params)
+                         :props props
+                         :exp (dt/in-future "15m")})
+          uri   (build-auth-uri cfg state)]
+      (respond (yrs/response 200 {:redirect-uri uri})))
+    (catch Throwable cause
+      (raise cause))))
 
 (defn- callback-handler
-  [cfg request]
-  (try
-    (let [info     (retrieve-info cfg request)
-          profile  (retrieve-profile cfg info)]
-      (generate-redirect cfg request info profile))
-    (catch Exception e
-      (l/warn :hint "error on oauth process"
-              :cause e)
-      (generate-error-redirect cfg e))))
+  [cfg request respond _]
+  (letfn [(process-request []
+            (p/let [info    (retrieve-info cfg request)
+                    profile (retrieve-profile cfg info)]
+              (generate-redirect cfg request info profile)))
+
+          (handle-error [cause]
+            (l/error :hint "error on oauth process" :cause cause)
+            (respond (generate-error-redirect cfg cause)))]
+
+    (-> (process-request)
+        (p/then respond)
+        (p/catch handle-error))))
 
 ;; --- INIT
 
@@ -250,15 +281,19 @@
 
 (defn wrap-handler
   [cfg handler]
-  (fn [request]
+  (fn [request respond raise]
     (let [provider (get-in request [:path-params :provider])
           provider (get-in @cfg [:providers provider])]
-      (when-not provider
-        (ex/raise :type :not-found
-                  :context {:provider provider}
-                  :hint "provider not configured"))
-      (-> (assoc @cfg :provider provider)
-          (handler request)))))
+      (if provider
+        (handler (assoc @cfg :provider provider)
+                 request
+                 respond
+                 raise)
+        (raise
+         (ex/error
+          :type :not-found
+          :provider provider
+          :hint "provider not configured"))))))
 
 (defmethod ig/init-key ::handler
   [_ cfg]
@@ -267,10 +302,10 @@
      :callback-handler (wrap-handler cfg callback-handler)}))
 
 (defn- discover-oidc-config
-  [{:keys [base-uri] :as opts}]
+  [{:keys [http-client]} {:keys [base-uri] :as opts}]
 
   (let [discovery-uri (u/join base-uri ".well-known/openid-configuration")
-        response      (ex/try (http/send! {:method :get :uri (str discovery-uri)}))]
+        response      (ex/try (http-client {:method :get :uri (str discovery-uri)} {:sync? true}))]
     (cond
       (ex/exception? response)
       (do
@@ -280,10 +315,10 @@
         nil)
 
       (= 200 (:status response))
-      (let [data (json/read-str (:body response))]
-        {:token-uri (get data "token_endpoint")
-         :auth-uri  (get data "authorization_endpoint")
-         :user-uri  (get data "userinfo_endpoint")})
+      (let [data (json/read (:body response))]
+        {:token-uri (get data :token_endpoint)
+         :auth-uri  (get data :authorization_endpoint)
+         :user-uri  (get data :userinfo_endpoint)})
 
       :else
       (do
@@ -311,6 +346,7 @@
               :roles-attr    (cf/get :oidc-roles-attr)
               :roles         (cf/get :oidc-roles)
               :name          "oidc"}]
+
     (if (and (string? (:base-uri opts))
              (string? (:client-id opts))
              (string? (:client-secret opts)))
@@ -325,7 +361,7 @@
             (assoc-in cfg [:providers "oidc"] opts))
           (do
             (l/debug :hint "trying to discover oidc provider configuration using BASE_URI")
-            (if-let [opts' (discover-oidc-config opts)]
+            (if-let [opts' (discover-oidc-config cfg opts)]
               (do
                 (l/debug :hint "discovered opts" :additional-opts opts')
                 (assoc-in cfg [:providers "oidc"] (merge opts opts')))
@@ -367,17 +403,16 @@
         (assoc-in cfg [:providers "github"] opts))
       cfg)))
 
-
 (defn- initialize-gitlab-provider
   [cfg]
   (let [base (cf/get :gitlab-base-uri "https://gitlab.com")
         opts {:base-uri      base
               :client-id     (cf/get :gitlab-client-id)
               :client-secret (cf/get :gitlab-client-secret)
-              :scopes        #{"read_user"}
+              :scopes        #{"openid" "profile" "email"}
               :auth-uri      (str base "/oauth/authorize")
               :token-uri     (str base "/oauth/token")
-              :user-uri      (str base "/api/v4/user")
+              :user-uri      (str base "/oauth/userinfo")
               :name          "gitlab"}]
     (if (and (string? (:client-id opts))
              (string? (:client-secret opts)))

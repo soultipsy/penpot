@@ -17,11 +17,13 @@
    [app.rpc.permissions :as perms]
    [app.rpc.queries.files :as files]
    [app.rpc.queries.projects :as proj]
+   [app.rpc.rlimit :as rlimit]
    [app.storage.impl :as simpl]
    [app.util.blob :as blob]
    [app.util.services :as sv]
    [app.util.time :as dt]
-   [clojure.spec.alpha :as s]))
+   [clojure.spec.alpha :as s]
+   [promesa.core :as p]))
 
 (declare create-file)
 
@@ -56,8 +58,9 @@
          (db/insert! conn :file-profile-rel))))
 
 (defn create-file
-  [conn {:keys [id name project-id is-shared data deleted-at]
+  [conn {:keys [id name project-id is-shared data deleted-at revn]
          :or {is-shared false
+              revn 0
               deleted-at nil}
          :as params}]
   (let [id   (or id (:id data) (uuid/next))
@@ -66,6 +69,7 @@
                          {:id id
                           :project-id project-id
                           :name name
+                          :revn revn
                           :is-shared is-shared
                           :data (blob/encode data)
                           :deleted-at deleted-at})]
@@ -125,7 +129,6 @@
   [{:keys [pool] :as cfg} {:keys [id profile-id] :as params}]
   (db/with-atomic [conn pool]
     (files/check-edition-permissions! conn profile-id id)
-
     (mark-file-deleted conn params)))
 
 (defn mark-file-deleted
@@ -272,6 +275,7 @@
          (contains? o :changes-with-metadata)))))
 
 (sv/defmethod ::update-file
+  {::rlimit/permits (cf/get :rlimit-file-update)}
   [{:keys [pool] :as cfg} {:keys [id profile-id] :as params}]
   (db/with-atomic [conn pool]
     (db/xact-lock! conn id)
@@ -293,8 +297,9 @@
 
 (defn- delete-from-storage
   [{:keys [storage] :as cfg} file]
-  (when-let [backend (simpl/resolve-backend storage (:data-backend file))]
-    (simpl/del-object backend file)))
+  (p/do
+    (when-let [backend (simpl/resolve-backend storage (:data-backend file))]
+      (simpl/del-object backend file))))
 
 (defn- update-file
   [{:keys [conn metrics] :as cfg} {:keys [file changes changes-with-metadata session-id profile-id] :as params}]
@@ -307,24 +312,21 @@
               :context {:incoming-revn (:revn params)
                         :stored-revn (:revn file)}))
 
-  (let [mtx1    (get-in metrics [:definitions :update-file-changes])
-        mtx2    (get-in metrics [:definitions :update-file-bytes-processed])
-
-        changes (if changes-with-metadata
+  (let [changes (if changes-with-metadata
                   (mapcat :changes changes-with-metadata)
                   changes)
 
         changes (vec changes)
 
         ;; Trace the number of changes processed
-        _       ((::mtx/fn mtx1) {:by (count changes)})
+        _       (mtx/run! metrics {:id :update-file-changes :inc (count changes)})
 
         ts      (dt/now)
-        file    (-> (files/retrieve-data cfg file)
+        file    (-> file
                     (update :revn inc)
                     (update :data (fn [data]
                                     ;; Trace the length of bytes of processed data
-                                    ((::mtx/fn mtx2) {:by (alength data)})
+                                    (mtx/run! metrics {:id :update-file-bytes-processed :inc (alength data)})
                                     (-> data
                                         (blob/decode)
                                         (assoc :id (:id file))
@@ -354,7 +356,7 @@
 
     ;; We need to delete the data from external storage backend
     (when-not (nil? (:data-backend file))
-      (delete-from-storage cfg file))
+      @(delete-from-storage cfg file))
 
     (db/update! conn :project
                 {:modified-at ts}
@@ -386,31 +388,33 @@
                                (assoc :changes []))))))))
 
 (defn- send-notifications
-  [{:keys [msgbus conn] :as cfg} {:keys [file changes session-id] :as params}]
-  (let [lchanges (filter library-change? changes)]
+  [{:keys [conn] :as cfg} {:keys [file changes session-id] :as params}]
+  (let [lchanges  (filter library-change? changes)
+        msgbus-fn (:msgbus cfg)]
+
 
     ;; Asynchronously publish message to the msgbus
-    (msgbus :pub {:topic (:id file)
-                  :message
-                  {:type :file-change
-                   :profile-id (:profile-id params)
-                   :file-id (:id file)
-                   :session-id (:session-id params)
-                   :revn (:revn file)
-                   :changes changes}})
+    (msgbus-fn :cmd :pub
+               :topic (:id file)
+               :message {:type :file-change
+                         :profile-id (:profile-id params)
+                         :file-id (:id file)
+                         :session-id (:session-id params)
+                         :revn (:revn file)
+                         :changes changes})
 
     (when (and (:is-shared file) (seq lchanges))
       (let [team-id (retrieve-team-id conn (:project-id file))]
         ;; Asynchronously publish message to the msgbus
-        (msgbus :pub {:topic team-id
-                      :message
-                      {:type :library-change
-                       :profile-id (:profile-id params)
-                       :file-id (:id file)
-                       :session-id session-id
-                       :revn (:revn file)
-                       :modified-at (dt/now)
-                       :changes lchanges}})))))
+        (msgbus-fn :cmd :pub
+                   :topic team-id
+                   :message {:type :library-change
+                             :profile-id (:profile-id params)
+                             :file-id (:id file)
+                             :session-id session-id
+                             :revn (:revn file)
+                             :modified-at (dt/now)
+                             :changes lchanges})))))
 
 (defn- retrieve-team-id
   [conn project-id]
@@ -472,27 +476,48 @@
                        :revn revn
                        :data (blob/encode data)}
                       {:id id})))
-
       nil)))
 
+;; --- Mutation: upsert object thumbnail
 
-;; --- Mutation: Upsert frame thumbnail
-
-(def sql:upsert-frame-thumbnail
-  "insert into file_frame_thumbnail(file_id, frame_id, data)
+(def sql:upsert-object-thumbnail
+  "insert into file_object_thumbnail(file_id, object_id, data)
    values (?, ?, ?)
-       on conflict(file_id, frame_id) do
+       on conflict(file_id, object_id) do
           update set data = ?;")
 
-(s/def ::data ::us/string)
-(s/def ::upsert-frame-thumbnail
-  (s/keys :req-un [::profile-id ::file-id ::frame-id ::data]))
+(s/def ::data (s/nilable ::us/string))
+(s/def ::object-id ::us/uuid)
+(s/def ::upsert-file-object-thumbnail
+  (s/keys :req-un [::profile-id ::file-id ::object-id ::data]))
 
-(sv/defmethod ::upsert-frame-thumbnail
-  [{:keys [pool] :as cfg} {:keys [profile-id file-id frame-id data]}]
+(sv/defmethod ::upsert-file-object-thumbnail
+  [{:keys [pool] :as cfg} {:keys [profile-id file-id object-id data]}]
   (db/with-atomic [conn pool]
     (files/check-edition-permissions! conn profile-id file-id)
-    (db/exec-one! conn [sql:upsert-frame-thumbnail file-id frame-id data data])
+    (if data
+      (db/exec-one! conn [sql:upsert-object-thumbnail file-id object-id data data])
+      (db/delete! conn :file-object-thumbnail {:file-id file-id :object-id object-id}))
     nil))
 
+;; --- Mutation: upsert file thumbnail
 
+(def sql:upsert-file-thumbnail
+  "insert into file_thumbnail (file_id, revn, data, props)
+   values (?, ?, ?, ?::jsonb)
+       on conflict(file_id, revn) do
+          update set data = ?, props=?, updated_at=now();")
+
+(s/def ::revn ::us/integer)
+(s/def ::props map?)
+(s/def ::upsert-file-thumbnail
+  (s/keys :req-un [::profile-id ::file-id ::revn ::data ::props]))
+
+(sv/defmethod ::upsert-file-thumbnail
+  [{:keys [pool] :as cfg} {:keys [profile-id file-id revn data props]}]
+  (db/with-atomic [conn pool]
+    (files/check-edition-permissions! conn profile-id file-id)
+    (let [props (db/tjson (or props {}))]
+      (db/exec-one! conn [sql:upsert-file-thumbnail
+                          file-id revn data props data props])
+      nil)))

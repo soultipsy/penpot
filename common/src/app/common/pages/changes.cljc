@@ -81,9 +81,7 @@
                 shapes
 
                 (nil? index)
-                (if (= :frame (:type obj))
-                  (into [id] shapes)
-                  (conj shapes id))
+                (conj shapes id)
 
                 :else
                 (cph/insert-at-index shapes index [id]))))
@@ -98,6 +96,7 @@
                   (-> (update :touched cph/set-touched-group :shapes-group)
                       (dissoc :remote-synced?)))))
 
+          ;; TODO: this looks wrong, why we allow nil values?
           (update-objects [objects parent-id]
             (if (and (or (nil? parent-id) (contains? objects parent-id))
                      (or (nil? frame-id) (contains? objects frame-id)))

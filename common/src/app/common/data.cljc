@@ -6,12 +6,12 @@
 
 (ns app.common.data
   "Data manipulation and query helper functions."
-  (:refer-clojure :exclude [read-string hash-map merge name parse-double])
+  (:refer-clojure :exclude [read-string hash-map merge name update-vals
+                            parse-double group-by iteration])
   #?(:cljs
      (:require-macros [app.common.data]))
   (:require
    [app.common.math :as mth]
-   [cljs.analyzer.api :as aapi]
    [clojure.set :as set]
    [cuerdas.core :as str]
    #?(:cljs [cljs.reader :as r]
@@ -23,9 +23,9 @@
   #?(:clj
      (:import linked.set.LinkedSet)))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Data Structures
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn ordered-set
   ([] lks/empty-linked-set)
@@ -37,6 +37,27 @@
   #?(:cljs (instance? lks/LinkedSet o)
      :clj (instance? LinkedSet o)))
 
+#?(:clj
+   (defmethod print-method clojure.lang.PersistentQueue [q, w]
+     ;; Overload the printer for queues so they look like fish
+     (print-method '<- w)
+     (print-method (seq q) w)
+     (print-method '-< w)))
+
+(defn queue
+  ([] #?(:clj clojure.lang.PersistentQueue/EMPTY :cljs #queue []))
+  ([a] (into (queue) [a]))
+  ([a & more] (into (queue) (cons a more))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Data Structures Manipulation
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn editable-collection?
+  [m]
+  #?(:clj (instance? clojure.lang.IEditableCollection m)
+     :cljs (implements? core/IEditableCollection m)))
+
 (defn deep-merge
   ([a b]
    (if (map? a)
@@ -44,10 +65,6 @@
      b))
   ([a b & rest]
    (reduce deep-merge a (cons b rest))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Data Structures Manipulation
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn dissoc-in
   [m [k & ks]]
@@ -89,7 +106,6 @@
 
 (defn preconj
   [coll elem]
-  (assert (vector? coll))
   (into [elem] coll))
 
 (defn enumerate
@@ -117,9 +133,10 @@
 (defn index-by
   "Return a indexed map of the collection keyed by the result of
   executing the getter over each element of the collection."
-  [getter coll]
-  (persistent!
-   (reduce #(assoc! %1 (getter %2) %2) (transient {}) coll)))
+  ([kf coll] (index-by kf identity coll))
+  ([kf vf coll]
+   (persistent!
+    (reduce #(assoc! %1 (kf %2) (vf %2)) (transient {}) coll))))
 
 (defn index-of-pred
   [coll pred]
@@ -151,15 +168,22 @@
   "Given a map, return a map removing key-value
   pairs when value is `nil`."
   [data]
-  (into {} (remove (comp nil? second) data)))
+  (into {} (remove (comp nil? second)) data))
+
+(defn without-qualified
+  [data]
+  (into {} (remove (comp qualified-keyword? first)) data))
 
 (defn without-keys
   "Return a map without the keys provided
   in the `keys` parameter."
   [data keys]
-  (when (map? data)
-    (persistent!
-     (reduce #(dissoc! %1 %2) (transient data) keys))))
+  (persistent!
+   (reduce dissoc!
+           (if (editable-collection? data)
+             (transient data)
+             (transient {}))
+           keys)))
 
 (defn remove-at-index
   "Takes a vector and returns a vector with an element in the
@@ -181,6 +205,22 @@
    (map (fn [[key val]] [key (mfn key val)])))
   ([mfn coll]
    (into {} (mapm mfn) coll)))
+
+;; TEMPORARY COPY of clojure.core/update-vals until we migrate to clojure 1.11
+
+(defn update-vals
+  "m f => {k (f v) ...}
+  Given a map m and a function f of 1-argument, returns a new map where the keys of m
+  are mapped to result of applying f to the corresponding values of m."
+  [m f]
+  (with-meta
+    (persistent!
+     (reduce-kv (fn [acc k v] (assoc! acc k (f v)))
+                (if (editable-collection? m)
+                  (transient m)
+                  (transient {}))
+                m))
+    (meta m)))
 
 (defn removev
   "Returns a vector of the items in coll for which (fn item) returns logical false"
@@ -310,13 +350,14 @@
              (do (vswap! seen conj input*)
                  (rf result input)))))))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Data Parsing / Conversion
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn nan?
   [v]
-  (not= v v))
+  #?(:cljs (js/isNaN v)
+     :clj  (not= v v)))
 
 (defn- impl-parse-integer
   [v]
@@ -374,9 +415,9 @@
   [val default]
   (or val default))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Data Parsing / Conversion
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn nilf
   "Returns a new function that if you pass nil as any argument will
   return nil"
@@ -391,54 +432,24 @@
   [v default]
   (if (some? v) v default))
 
+(defn num?
+  "Checks if a value `val` is a number but not an Infinite or NaN"
+  ([val]
+   (and (number? val)
+        (mth/finite? val)
+        (not (mth/nan? val))))
+
+  ([val & vals]
+   (and (num? val)
+        (->> vals (every? num?)))))
+
 (defn check-num
   "Function that checks if a number is nil or nan. Will return 0 when not
   valid and the number otherwise."
   ([v]
    (check-num v 0))
   ([v default]
-   (if (or (not v)
-           (not (mth/finite? v))
-           (mth/nan? v)) default v)))
-
-
-(defmacro export
-  "A helper macro that allows reexport a var in a current namespace."
-  [v]
-  (if (boolean (:ns &env))
-
-    ;; Code for ClojureScript
-    (let [mdata    (aapi/resolve &env v)
-          arglists (second (get-in mdata [:meta :arglists]))
-          sym      (symbol (core/name v))
-          andsym   (symbol "&")
-          procarg  #(if (= % andsym) % (gensym "param"))]
-      (if (pos? (count arglists))
-        `(def
-           ~(with-meta sym (:meta mdata))
-           (fn ~@(for [args arglists]
-                   (let [args (map procarg args)]
-                     (if (some #(= andsym %) args)
-                       (let [[sargs dargs] (split-with #(not= andsym %) args)]
-                         `([~@sargs ~@dargs] (apply ~v ~@sargs ~@(rest dargs))))
-                       `([~@args] (~v ~@args)))))))
-        `(def ~(with-meta sym (:meta mdata)) ~v)))
-
-    ;; Code for Clojure
-    (let [vr (resolve v)
-          m  (meta vr)
-          n  (:name m)
-          n  (with-meta n
-               (cond-> {}
-                 (:dynamic m) (assoc :dynamic true)
-                 (:protocol m) (assoc :protocol (:protocol m))))]
-      `(let [m# (meta ~vr)]
-         (def ~n (deref ~vr))
-         (alter-meta! (var ~n) merge (dissoc m# :name))
-         ;; (when (:macro m#)
-         ;;   (.setMacro (var ~n)))
-         ~vr))))
-
+   (if (num? v) v default)))
 
 (defn any-key? [element & rest]
   (some #(contains? element %) rest))
@@ -609,3 +620,71 @@
           (if (or (keyword? k) (string? k))
             [(keyword (str/kebab (name k))) v]
             [k v])))))
+
+
+(defn group-by
+  ([kf coll] (group-by kf identity [] coll))
+  ([kf vf coll] (group-by kf vf [] coll))
+  ([kf vf iv coll]
+   (let [conj (fnil conj iv)]
+     (reduce (fn [result item]
+               (update result (kf item) conj (vf item)))
+             {}
+             coll))))
+
+;; TEMPORAL COPY of clojure-1.11 iteration function, should be
+;; replaced with the builtin on when stable version is released.
+
+#?(:clj
+   (defn iteration
+     "Creates a seqable/reducible via repeated calls to step,
+     a function of some (continuation token) 'k'. The first call to step
+     will be passed initk, returning 'ret'. Iff (somef ret) is true,
+     (vf ret) will be included in the iteration, else iteration will
+     terminate and vf/kf will not be called. If (kf ret) is non-nil it
+     will be passed to the next step call, else iteration will terminate.
+     This can be used e.g. to consume APIs that return paginated or batched data.
+      step - (possibly impure) fn of 'k' -> 'ret'
+      :somef - fn of 'ret' -> logical true/false, default 'some?'
+      :vf - fn of 'ret' -> 'v', a value produced by the iteration, default 'identity'
+      :kf - fn of 'ret' -> 'next-k' or nil (signaling 'do not continue'), default 'identity'
+      :initk - the first value passed to step, default 'nil'
+     It is presumed that step with non-initk is unreproducible/non-idempotent.
+     If step with initk is unreproducible it is on the consumer to not consume twice."
+     {:added "1.11"}
+     [step & {:keys [somef vf kf initk]
+              :or {vf identity
+                   kf identity
+                   somef some?
+                   initk nil}}]
+     (reify
+       clojure.lang.Seqable
+       (seq [_]
+         ((fn next [ret]
+            (when (somef ret)
+              (cons (vf ret)
+                    (when-some [k (kf ret)]
+                      (lazy-seq (next (step k)))))))
+          (step initk)))
+       clojure.lang.IReduceInit
+       (reduce [_ rf init]
+         (loop [acc init
+                ret (step initk)]
+           (if (somef ret)
+             (let [acc (rf acc (vf ret))]
+               (if (reduced? acc)
+                 @acc
+                 (if-some [k (kf ret)]
+                   (recur acc (step k))
+                   acc)))
+             acc))))))
+(defn toggle-selection
+  ([set value]
+   (toggle-selection set value false))
+
+  ([set value toggle?]
+   (if-not toggle?
+     (conj (ordered-set) value)
+     (if (contains? set value)
+       (disj set value)
+       (conj set value)))))

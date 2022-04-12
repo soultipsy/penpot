@@ -7,6 +7,7 @@
 (ns app.main.ui.workspace.viewport.gradients
   "Gradients handlers and renders"
   (:require
+   [app.common.data :as d]
    [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
@@ -32,10 +33,10 @@
 (def gradient-square-stroke-color-selected "var(--color-select)")
 
 (def editing-spot-ref
-  (l/derived (l/in [:workspace-local :editing-stop]) st/state))
+  (l/derived (l/in [:workspace-global :editing-stop]) st/state))
 
 (def current-gradient-ref
-  (l/derived (l/in [:workspace-local :current-gradient]) st/state =))
+  (l/derived (l/in [:workspace-global :current-gradient]) st/state =))
 
 (mf/defc shadow [{:keys [id x y width height offset]}]
   [:filter {:id id
@@ -281,9 +282,7 @@
          (fn [point]
            (let [point (gpt/transform point transform-inverse)
                  start-x (/ (- (:x point) x) width)
-                 start-y (/ (- (:y point) y) height)
-                 start-x (mth/precision start-x 2)
-                 start-y (mth/precision start-y 2)]
+                 start-y (/ (- (:y point) y) height)]
              (change! {:start-x start-x :start-y start-y}))))
 
         on-change-finish
@@ -292,9 +291,7 @@
          (fn [point]
            (let [point (gpt/transform point transform-inverse)
                  end-x (/ (- (:x point) x) width)
-                 end-y (/ (- (:y point) y) height)
-                 end-x (mth/precision end-x 2)
-                 end-y (mth/precision end-y 2)]
+                 end-y (/ (- (:y point) y) height)]
              (change! {:end-x end-x :end-y end-y}))))
 
         on-change-width
@@ -304,7 +301,7 @@
            (let [scale-factor-y (/ gradient-length (/ height 2))
                  norm-dist (/ (gpt/distance point from-p)
                               (* (/ width 2) scale-factor-y))]
-             (when (and norm-dist (mth/finite? norm-dist))
+             (when (and norm-dist (d/num? norm-dist))
                (change! {:width norm-dist})))))]
 
     (when (and gradient

@@ -10,17 +10,18 @@
    ["xml-js" :as xml]
    [app.browser :as bw]
    [app.common.data :as d]
+   [app.common.data.macros :as dm]
    [app.common.exceptions :as ex :include-macros true]
    [app.common.logging :as l]
    [app.common.pages :as cp]
    [app.common.spec :as us]
+   [app.common.uri :as u]
    [app.config :as cf]
-   [app.renderer.bitmap :refer [create-cookie]]
+   [app.util.mime :as mime]
    [app.util.shell :as sh]
    [cljs.spec.alpha :as s]
    [clojure.walk :as walk]
    [cuerdas.core :as str]
-   [lambdaisland.uri :as u]
    [promesa.core :as p]))
 
 (l/set-level! :trace)
@@ -112,9 +113,8 @@
     {:width width
      :height height}))
 
-
-(defn- render-object
-  [{:keys [page-id file-id object-id token scale suffix type]}]
+(defn render
+  [{:keys [page-id file-id objects token scale suffix type uri]} on-object]
   (letfn [(convert-to-ppm [pngpath]
             (l/trace :fn :convert-to-ppm)
             (let [basepath (path/dirname pngpath)
@@ -247,7 +247,7 @@
 
           (trace-node [{:keys [data] :as node}]
             (l/trace :fn :trace-node)
-            (p/let [tdpath  (sh/create-tmpdir! "svgexport-")
+            (p/let [tdpath  (sh/mktmpdir! "svgexport")
                     pngpath (path/join tdpath "origin.png")
                     _       (sh/write-file! pngpath data)
                     ppmpath (convert-to-ppm pngpath)
@@ -294,83 +294,78 @@
              (sh/rmdir! tempdir)
              (dissoc node :tempdir)))
 
-          (process-text-node [page item]
+          (extract-txt-node [page item]
             (-> (p/resolved item)
                 (p/then (partial resolve-text-node page))
                 (p/then extract-single-node)
                 (p/then trace-node)
                 (p/then clean-temp-data)))
 
-          (process-text-nodes [page]
+          (extract-txt-nodes [page {:keys [id] :as objects}]
             (l/trace :fn :process-text-nodes)
-            (-> (bw/select-all page "#screenshot foreignObject")
-                (p/then (fn [nodes] (p/all (map (partial process-text-node page) nodes))))))
+            (-> (bw/select-all page (str/concat "#screenshot-" id " foreignObject"))
+                (p/then (fn [nodes] (p/all (map (partial extract-txt-node page) nodes))))
+                (p/then (fn [nodes] (d/index-by :id nodes)))))
 
-          (extract-svg [page]
-            (p/let [dom     (bw/select page "#screenshot")
-                    xmldata (bw/eval! dom (fn [elem] (.-outerHTML ^js elem)))
-                    nodes   (process-text-nodes page)
-                    nodes   (d/index-by :id nodes)
-                    result  (replace-text-nodes xmldata nodes)]
-              ;; (println "------- ORIGIN:")
-              ;; (cljs.pprint/pprint (xml->clj xmldata))
-              ;; (println "------- RESULT:")
-              ;; (cljs.pprint/pprint (xml->clj result))
-              ;; (println "-------")
-              result))
+          (extract-svg [page {:keys [id] :as object}]
+            (let [node (bw/select page (str/concat "#screenshot-" id))]
+              (bw/wait-for node)
+              (bw/eval! node (fn [elem] (.-outerHTML ^js elem)))))
 
-          (render-in-page [page {:keys [uri cookie] :as rctx}]
-            (let [viewport {:width 1920
-                            :height 1080
-                            :scale 4}
-                  options  {:viewport viewport
-                            :timeout 15000
-                            :cookie cookie}]
-              (p/do!
-               (bw/configure-page! page options)
-               (bw/navigate! page uri)
-               (bw/wait-for page "#screenshot")
-               (bw/sleep page 2000)
-               ;; (bw/eval! page (js* "() => document.body.style.background = 'transparent'"))
-               page)))
+          (prepare-options [uri]
+            #js {:screen #js {:width bw/default-viewport-width
+                              :height bw/default-viewport-height}
+                 :viewport #js {:width bw/default-viewport-width
+                                :height bw/default-viewport-height}
+                 :locale "en-US"
+                 :storageState #js {:cookies (bw/create-cookies uri {:token token})}
+                 :deviceScaleFactor scale
+                 :userAgent bw/default-user-agent})
 
-          (handle [rctx page]
-            (p/let [page (render-in-page page rctx)]
-              (extract-svg page)))]
+          (render-object [page {:keys [id] :as object}]
+            (p/let [tmpdir (sh/mktmpdir! "svg-render")
+                    path   (path/join tmpdir (str/concat id (mime/get-extension type)))
+                    node   (bw/select page (str/concat "#screenshot-" id))]
+              (bw/wait-for node)
+              (p/let [xmldata (extract-svg page object)
+                      txtdata (extract-txt-nodes page object)
+                      result  (replace-text-nodes xmldata txtdata)
 
-    (let [path   (str "/render-object/" file-id "/" page-id "/" object-id "?render-texts=true")
-          uri    (-> (u/uri (cf/get :public-uri))
-                     (assoc :path "/")
-                     (assoc :fragment path))
-          cookie (create-cookie uri token)
-          rctx   {:cookie cookie
-                  :uri (str uri)}]
-      (l/info :uri (:uri rctx))
-      (bw/exec! (partial handle rctx)))))
+                      ;; SVG standard don't allow the entity
+                      ;; nbsp. &#160; is equivalent but compatible
+                      ;; with SVG.
+                      result  (str/replace result "&nbsp;" "&#160;")]
 
-(s/def ::name ::us/string)
-(s/def ::suffix ::us/string)
-(s/def ::type #{:svg})
-(s/def ::page-id ::us/uuid)
-(s/def ::file-id ::us/uuid)
-(s/def ::object-id ::us/uuid)
-(s/def ::scale ::us/number)
-(s/def ::token ::us/string)
-(s/def ::filename ::us/string)
+                ;; (println "------- ORIGIN:")
+                ;; (cljs.pprint/pprint (xml->clj xmldata))
+                ;; (println "------- RESULT:")
+                ;; (cljs.pprint/pprint (xml->clj result))
+                ;; (println "-------")
 
-(s/def ::render-params
-  (s/keys :req-un [::name ::suffix ::type ::object-id ::page-id ::file-id ::scale ::token]
-          :opt-un [::filename]))
+                (sh/write-file! path result)
+                (on-object (assoc object :path path))
+                path)))
 
-(defn render
-  [params]
-  (us/assert ::render-params params)
-  (p/let [content (render-object params)]
-    {:content content
-     :filename (or (:filename params)
-                   (str (:name params)
-                        (:suffix params "")
-                        ".svg"))
-     :length (alength content)
-     :mime-type "image/svg+xml"}))
+          (render [uri page]
+            (l/info :uri uri)
+            (p/do
+              ;; navigate to the page and perform basic setup
+              (bw/nav! page (str uri))
+              (bw/sleep page 1000) ; the good old fix with sleep
+
+              ;; take the screnshot of requested objects, one by one
+              (p/run! (partial render-object page) objects)
+              nil))]
+
+    (p/let [params {:file-id file-id
+                    :page-id page-id
+                    :render-texts true
+                    :render-embed true
+                    :object-id (mapv :id objects)
+                    :route "objects"}
+            uri    (-> (or uri (cf/get :public-uri))
+                       (assoc :path "/render.html")
+                       (assoc :query (u/map->query-string params)))]
+      (bw/exec! (prepare-options uri)
+                (partial render uri)))))
 

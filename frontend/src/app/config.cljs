@@ -54,16 +54,26 @@
     :browser
     :webworker))
 
+(def default-flags
+  [:enable-newsletter-subscription])
+
 (defn- parse-flags
   [global]
   (let [flags (obj/get global "penpotFlags" "")
         flags (sequence (map keyword) (str/words flags))]
-    (flags/parse flags/default flags)))
+    (flags/parse flags/default default-flags flags)))
 
 (defn- parse-version
   [global]
   (-> (obj/get global "penpotVersion")
       (v/parse)))
+
+(defn parse-build-date
+  [global]
+  (let [date (obj/get global "penpotBuildDate")]
+    (if (= date "%buildDate%")
+      "unknown"
+      date)))
 
 ;; --- Globar Config Vars
 
@@ -80,11 +90,15 @@
 (def sentry-dsn           (obj/get global "penpotSentryDsn"))
 (def onboarding-form-id   (obj/get global "penpotOnboardingQuestionsFormId"))
 
+(def build-date           (parse-build-date global))
 (def flags                (atom (parse-flags global)))
 (def version              (atom (parse-version global)))
 (def target               (atom (parse-target global)))
 (def browser              (atom (parse-browser)))
 (def platform             (atom (parse-platform)))
+
+(def terms-of-service-uri (obj/get global "penpotTermsOfServiceURI" nil))
+(def privacy-policy-uri   (obj/get global "penpotPrivacyPolicyURI" nil))
 
 ;; maintain for backward compatibility
 (let [login-with-ldap (obj/get global "penpotLoginWithLDAP" false)
@@ -131,10 +145,7 @@
 (defn resolve-file-media
   ([media]
    (resolve-file-media media false))
-
-  ([{:keys [id]} thumbnail?]
+  ([{:keys [id] :as media} thumbnail?]
    (str (cond-> (u/join public-uri "assets/by-file-media-id/")
           (true? thumbnail?) (u/join (str id "/thumbnail"))
           (false? thumbnail?) (u/join (str id))))))
-
-

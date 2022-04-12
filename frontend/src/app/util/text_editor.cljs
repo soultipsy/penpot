@@ -15,7 +15,8 @@
 
 (defn immutable-map->map
   [obj]
-  (into {} (map (fn [[k v]] [(keyword k) v])) (seq obj)))
+  (let [data (into {} (map (fn [[k v]] [(keyword k) v])) (seq obj))]
+    (assoc data :fills (js->clj (:fills data) :keywordize-keys true))))
 
 ;; --- DRAFT-JS HELPERS
 
@@ -94,6 +95,13 @@
         state (impl/applyInlineStyle state (txt/attrs-to-styles attrs))
         selected (impl/getSelectedBlocks state)]
     (reduce update-blocks state selected)))
+
+(defn update-editor-current-inline-styles-fn
+  [state update-fn]
+  (let [attrs (-> (.getCurrentInlineStyle ^js state)
+                  (txt/styles-to-attrs)
+                  (update-fn))]
+    (impl/applyInlineStyle state (txt/attrs-to-styles attrs))))
 
 (defn editor-split-block
   [state]

@@ -205,9 +205,24 @@
 
    {:name "0065-add-trivial-spelling-fixes"
     :fn (mg/resource "app/migrations/sql/0065-add-trivial-spelling-fixes.sql")}
-   
+
    {:name "0066-add-frame-thumbnail-table"
     :fn (mg/resource "app/migrations/sql/0066-add-frame-thumbnail-table.sql")}
+
+   {:name "0067-add-team-invitation-table"
+    :fn (mg/resource "app/migrations/sql/0067-add-team-invitation-table.sql")}
+
+   {:name "0068-mod-storage-object-table"
+    :fn (mg/resource "app/migrations/sql/0068-mod-storage-object-table.sql")}
+
+   {:name "0069-add-file-thumbnail-table"
+    :fn (mg/resource "app/migrations/sql/0069-add-file-thumbnail-table.sql")}
+
+   {:name "0070-del-frame-thumbnail-table"
+    :fn (mg/resource "app/migrations/sql/0070-del-frame-thumbnail-table.sql")}
+
+   {:name "0071-add-file-object-thumbnail-table"
+    :fn (mg/resource "app/migrations/sql/0071-add-file-object-thumbnail-table.sql")}
    ])
 
 

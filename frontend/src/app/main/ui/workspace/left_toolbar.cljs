@@ -7,8 +7,8 @@
 (ns app.main.ui.workspace.left-toolbar
   (:require
    [app.common.geom.point :as gpt]
-   [app.common.math :as mth]
    [app.common.media :as cm]
+   [app.main.data.events :as ev]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.shortcuts :as sc]
    [app.main.refs :as refs]
@@ -19,7 +19,9 @@
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.object :as obj]
+   [app.util.timers :as ts]
    [rumext.alpha :as mf]))
+
 
 (mf/defc image-upload
   {::mf/wrap [mf/memo]}
@@ -35,26 +37,25 @@
          (mf/deps file)
          (fn [blobs]
            ;; We don't want to add a ref because that redraws the component
-           ;; for everychange. Better direct access on the callback
-           ;; vbox (get-in @st/state [:workspace-local :vbox])
-           (let [vbox   (:vbox @refs/workspace-local)
-                 x      (mth/round (+ (:x vbox) (/ (:width vbox) 2)))
-                 y      (mth/round (+ (:y vbox) (/ (:height vbox) 2)))
+           ;; for everychange. Better direct access on the callback.
+           (let [vbox   (deref refs/vbox)
+                 x      (+ (:x vbox) (/ (:width vbox) 2))
+                 y      (+ (:y vbox) (/ (:height vbox) 2))
                  params {:file-id (:id file)
                          :blobs (seq blobs)
                          :position (gpt/point x y)}]
              (st/emit! (dw/upload-media-workspace params)))))]
 
-       [:li.tooltip.tooltip-right
-        {:alt (tr "workspace.toolbar.image" (sc/get-tooltip :insert-image))
-         :on-click on-click}
-        [:*
-         i/image
-         [:& file-uploader {:input-id "image-upload"
-                            :accept cm/str-image-types
-                            :multi true
-                            :ref ref
-                            :on-selected on-files-selected}]]]))
+    [:li.tooltip.tooltip-right
+     {:alt (tr "workspace.toolbar.image" (sc/get-tooltip :insert-image))
+      :on-click on-click}
+     [:*
+      i/image
+      [:& file-uploader {:input-id "image-upload"
+                         :accept cm/str-image-types
+                         :multi true
+                         :ref ref
+                         :on-selected on-files-selected}]]]))
 
 (mf/defc left-toolbar
   {::mf/wrap [mf/memo]
@@ -124,15 +125,19 @@
          :class (when (contains? layout :textpalette) "selected")
          :on-click (fn []
                      (r/set-resize-type! :bottom)
-                     (st/emit! (dw/remove-layout-flags :colorpalette)
-                               (dw/toggle-layout-flags :textpalette)))}
+                     (dom/add-class!  (dom/get-element-by-class "color-palette") "fade-out-down")
+                     (ts/schedule 300 #(st/emit! (dw/remove-layout-flag :colorpalette)
+                                                 (-> (dw/toggle-layout-flag :textpalette)
+                                                     (vary-meta assoc ::ev/origin "workspace-left-toolbar")))))}
         "Ag"]
-       
+
        [:li.tooltip.tooltip-right
         {:alt (tr "workspace.toolbar.color-palette" (sc/get-tooltip :toggle-colorpalette))
          :class (when (contains? layout :colorpalette) "selected")
          :on-click (fn []
                      (r/set-resize-type! :bottom)
-                     (st/emit! (dw/remove-layout-flags :textpalette)
-                               (dw/toggle-layout-flags :colorpalette)))}
+                     (dom/add-class!  (dom/get-element-by-class "color-palette") "fade-out-down")
+                     (ts/schedule 300 #(st/emit! (dw/remove-layout-flag :textpalette)
+                                                 (-> (dw/toggle-layout-flag :colorpalette)
+                                                     (vary-meta assoc ::ev/origin "workspace-left-toolbar")))))}
         i/palette]]]]))

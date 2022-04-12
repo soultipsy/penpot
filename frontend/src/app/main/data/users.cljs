@@ -13,6 +13,7 @@
    [app.config :as cf]
    [app.main.data.events :as ev]
    [app.main.data.media :as di]
+   [app.main.data.websocket :as ws]
    [app.main.repo :as rp]
    [app.util.i18n :as i18n]
    [app.util.router :as rt]
@@ -167,16 +168,19 @@
         (when (is-authenticated? profile)
           (->> (rx/of (profile-fetched profile)
                       (fetch-teams)
-                      (get-redirect-event))
+                      (get-redirect-event)
+                      (ws/initialize))
                (rx/observe-on :async)))))))
 
+(s/def ::invitation-token ::us/not-empty-string)
 (s/def ::login-params
-  (s/keys :req-un [::email ::password]))
+  (s/keys :req-un [::email ::password]
+          :opt-un [::invitation-token]))
 
 (declare login-from-register)
 
 (defn login
-  [{:keys [email password] :as data}]
+  [{:keys [email password invitation-token] :as data}]
   (us/verify ::login-params data)
   (ptk/reify ::login
     ptk/WatchEvent
@@ -184,9 +188,10 @@
       (let [{:keys [on-error on-success]
              :or {on-error rx/throw
                   on-success identity}} (meta data)
+
             params {:email email
                     :password password
-                    :scope "webapp"}]
+                    :invitation-token invitation-token}]
 
         ;; NOTE: We can't take the profile value from login because
         ;; there are cases when login is successfull but the cookie is
@@ -197,31 +202,32 @@
         ;; the returned profile is an NOT authenticated profile, we
         ;; proceed to logout and show an error message.
 
-        (rx/merge
-         (->> (rp/mutation :login params)
-              (rx/map fetch-profile)
-              (rx/catch on-error))
+        (->> (rp/mutation :login (d/without-nils params))
+             (rx/merge-map (fn [data]
+                             (rx/merge
+                              (rx/of (fetch-profile))
+                              (->> stream
+                                   (rx/filter profile-fetched?)
+                                   (rx/take 1)
+                                   (rx/map deref)
+                                   (rx/filter (complement is-authenticated?))
+                                   (rx/tap on-error)
+                                   (rx/map #(ex/raise :type :authentication))
+                                   (rx/observe-on :async))
 
-         (->> stream
-              (rx/filter profile-fetched?)
-              (rx/take 1)
-              (rx/map deref)
-              (rx/filter (complement is-authenticated?))
-              (rx/tap on-error)
-              (rx/map #(ex/raise :type :authentication))
-              (rx/observe-on :async))
+                              (->> stream
+                                   (rx/filter profile-fetched?)
+                                   (rx/take 1)
+                                   (rx/map deref)
+                                   (rx/filter is-authenticated?)
+                                   (rx/map (fn [profile]
+                                             (with-meta (merge data profile)
+                                               {::ev/source "login"})))
+                                   (rx/tap on-success)
+                                   (rx/map logged-in)
+                                   (rx/observe-on :async)))))
+             (rx/catch on-error))))))
 
-         (->> stream
-              (rx/filter profile-fetched?)
-              (rx/take 1)
-              (rx/map deref)
-              (rx/filter is-authenticated?)
-              (rx/map (fn [profile]
-                        (with-meta profile
-                          {::ev/source "login"})))
-              (rx/tap on-success)
-              (rx/map logged-in)
-              (rx/observe-on :async)))))))
 
 (defn login-from-token
   [{:keys [profile] :as tdata}]
@@ -264,10 +270,12 @@
 
      ptk/WatchEvent
      (watch [_ _ _]
-       ;; NOTE: We need the `effect` of the current event to be
-       ;; executed before the redirect.
-       (->> (rx/of (rt/nav :auth-login))
-            (rx/observe-on :async)))
+       (rx/merge
+        ;; NOTE: We need the `effect` of the current event to be
+        ;; executed before the redirect.
+        (->> (rx/of (rt/nav :auth-login))
+             (rx/observe-on :async))
+        (rx/of (ws/finalize))))
 
      ptk/EffectEvent
      (effect [_ _ _]
@@ -285,29 +293,6 @@
             (rx/catch (constantly (rx/of 1)))
             (rx/map #(logged-out params)))))))
 
-;; --- EVENT: register
-
-(s/def ::register
-  (s/keys :req-un [::fullname ::password ::email]))
-
-(defn register
-  "Create a register event instance."
-  [data]
-  (s/assert ::register data)
-  (ptk/reify ::register
-    ptk/WatchEvent
-    (watch [_ _ _]
-      (let [{:keys [on-error on-success]
-             :or {on-error identity
-                  on-success identity}} (meta data)]
-        (->> (rp/mutation :register-profile data)
-             (rx/tap on-success)
-             (rx/catch on-error))))
-
-    ptk/EffectEvent
-    (effect [_ _ _]
-      (swap! storage dissoc ::redirect-to))))
-
 ;; --- Update Profile
 
 (defn update-profile
@@ -318,8 +303,8 @@
     (watch [_ _ stream]
       (let [mdata      (meta data)
             on-success (:on-success mdata identity)
-            on-error   (:on-error mdata #(rx/throw %))]
-        (->> (rp/mutation :update-profile data)
+            on-error   (:on-error mdata rx/throw)]
+        (->> (rp/mutation :update-profile (dissoc data :props))
              (rx/catch on-error)
              (rx/mapcat
               (fn [_]
@@ -381,6 +366,20 @@
                          (rx/empty)))
              (rx/ignore))))))
 
+(defn update-profile-props
+  [props]
+  (ptk/reify ::update-profile-props
+    ptk/UpdateEvent
+    (update [_ state]
+      (update-in state [:profile :props] merge props))
+
+    ;; TODO: for the release 1.13 we should skip fetching profile and just use
+    ;; the response value of update-profile-props RPC call
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (->> (rp/mutation :update-profile-props {:props props})
+           (rx/map (constantly (fetch-profile)))))))
+
 (defn mark-onboarding-as-viewed
   ([] (mark-onboarding-as-viewed nil))
   ([{:keys [version]}]
@@ -392,7 +391,6 @@
                       :release-notes-viewed version}]
          (->> (rp/mutation :update-profile-props {:props props})
               (rx/map (constantly (fetch-profile)))))))))
-
 
 (defn mark-questions-as-answered
   []
@@ -446,20 +444,6 @@
       (watch [_ _ _]
         (->> (rp/query :team-users {:team-id team-id})
              (rx/map #(partial fetched %)))))))
-
-;; --- Update Nudge
-
-(defn update-nudge
-  [value]
-  (ptk/reify ::update-nudge
-    ptk/UpdateEvent
-    (update [_ state]
-      (update-in state [:profile :props] assoc :nudge value))
-    ptk/WatchEvent
-    (watch [_ _ _]
-      (let [props {:nudge value}]
-        (->> (rp/mutation :update-profile-props {:props props})
-             (rx/map (constantly (fetch-profile))))))))
 
 ;; --- EVENT: request-account-deletion
 

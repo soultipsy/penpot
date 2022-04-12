@@ -344,6 +344,7 @@
       justify-content: space-between;
       margin-right: -8px;
       max-height: 5.5rem;
+      overflow: auto;
     }
 
     .selected-colors::after {
@@ -498,6 +499,10 @@
   display: flex;
   margin-bottom: $size-2;
   position: relative;
+
+  &[draggable="true"] {
+    cursor: pointer;
+  }
 
   .color-name {
     font-size: $fs12;
