@@ -19,11 +19,9 @@
    [app.main.data.workspace.changes :as dch]
    [app.main.data.workspace.common :as dwc]
    [app.main.data.workspace.state-helpers :as wsh]
-   [app.main.repo :as rp]
    [app.util.color :as uc]
    [app.util.path.parser :as upp]
    [app.util.svg :as usvg]
-   [app.util.uri :as uu]
    [beicon.core :as rx]
    [cuerdas.core :as str]
    [potok.core :as ptk]))
@@ -74,6 +72,7 @@
     ;; Color present as attribute
     (uc/color? (str/trim (get-in shape [:svg-attrs :fill])))
     (-> (update :svg-attrs dissoc :fill)
+        (update-in [:svg-attrs :style] dissoc :fill)
         (assoc-in [:fills 0 :fill-color] (-> (get-in shape [:svg-attrs :fill])
                                              (str/trim)
                                              (uc/parse-color))))
@@ -81,17 +80,20 @@
     ;; Color present as style
     (uc/color? (str/trim (get-in shape [:svg-attrs :style :fill])))
     (-> (update-in [:svg-attrs :style] dissoc :fill)
+        (update :svg-attrs dissoc :fill)
         (assoc-in [:fills 0 :fill-color] (-> (get-in shape [:svg-attrs :style :fill])
                                              (str/trim)
                                              (uc/parse-color))))
 
     (get-in shape [:svg-attrs :fill-opacity])
     (-> (update :svg-attrs dissoc :fill-opacity)
+        (update-in [:svg-attrs :style] dissoc :fill-opacity)
         (assoc-in [:fills 0 :fill-opacity] (-> (get-in shape [:svg-attrs :fill-opacity])
                                                (d/parse-double))))
 
     (get-in shape [:svg-attrs :style :fill-opacity])
     (-> (update-in [:svg-attrs :style] dissoc :fill-opacity)
+        (update :svg-attrs dissoc :fill-opacity)
         (assoc-in [:fills 0 :fill-opacity] (-> (get-in shape [:svg-attrs :style :fill-opacity])
                                                (d/parse-double))))))
 
@@ -122,7 +124,7 @@
 
           (get-in shape [:svg-attrs :style :stroke-opacity])
           (-> (update-in [:svg-attrs :style] dissoc :stroke-opacity)
-              (assoc-in [:fills 0 :stroke-opacity] (-> (get-in shape [:svg-attrs :style :stroke-opacity])
+              (assoc-in [:strokes 0 :stroke-opacity] (-> (get-in shape [:svg-attrs :style :stroke-opacity])
                                                        (d/parse-double))))
 
           (get-in shape [:svg-attrs :stroke-width])
@@ -393,14 +395,12 @@
                         :image       (create-image-shape name frame-id svg-data element-data)
                         #_other      (create-raw-svg name frame-id svg-data element-data)))]
         (when (some? shape)
-          (let [shape (assoc shape :fills [])
-                shape (assoc shape :strokes [])
-
-                shape (when (some? shape)
-                        (-> shape
-                            (assoc :svg-defs (select-keys (:defs svg-data) references))
-                            (setup-fill)
-                            (setup-stroke)))
+          (let [shape (-> shape
+                          (assoc :fills [])
+                          (assoc :strokes [])
+                          (assoc :svg-defs (select-keys (:defs svg-data) references))
+                          (setup-fill)
+                          (setup-stroke))
 
                 children (cond->> (:content element-data)
                            (or (= tag :g) (= tag :svg))
@@ -424,38 +424,6 @@
         (reduce reducer-fn [unames changes] (d/enumerate children)))
 
       [unames changes])))
-
-(declare create-svg-shapes)
-
-(defn svg-uploaded
-  [svg-data file-id position]
-  (ptk/reify ::svg-uploaded
-    ptk/WatchEvent
-    (watch [_ _ _]
-      ;; Once the SVG is uploaded, we need to extract all the bitmap
-      ;; images and upload them separately, then proceed to create
-      ;; all shapes.
-      (->> (rx/from (usvg/collect-images svg-data))
-           (rx/map (fn [uri]
-                     (d/merge
-                      {:file-id file-id
-                       :is-local true
-                       :url uri}
-
-                      (if (str/starts-with? uri "data:")
-                        {:name "image"
-                         :content (uu/data-uri->blob uri)}
-                        {:name (uu/uri-name uri)}))))
-           (rx/mapcat (fn [uri-data]
-                        (->> (rp/mutation! (if (contains? uri-data :content)
-                                             :upload-file-media-object
-                                             :create-file-media-object-from-url) uri-data)
-                             ;; When the image uploaded fail we skip the shape
-                             ;; returning `nil` will afterward not create the shape.
-                             (rx/catch #(rx/of nil))
-                             (rx/map #(vector (:url uri-data) %)))))
-           (rx/reduce (fn [acc [url image]] (assoc acc url image)) {})
-           (rx/map #(create-svg-shapes (assoc svg-data :image-data %) position))))))
 
 (defn create-svg-shapes
   [svg-data {:keys [x y] :as position}]

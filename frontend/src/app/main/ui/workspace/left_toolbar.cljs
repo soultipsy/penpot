@@ -10,6 +10,7 @@
    [app.common.media :as cm]
    [app.main.data.events :as ev]
    [app.main.data.workspace :as dw]
+   [app.main.data.workspace.media :as dwm]
    [app.main.data.workspace.shortcuts :as sc]
    [app.main.refs :as refs]
    [app.main.store :as st]
@@ -44,7 +45,7 @@
                  params {:file-id (:id file)
                          :blobs (seq blobs)
                          :position (gpt/point x y)}]
-             (st/emit! (dw/upload-media-workspace params)))))]
+             (st/emit! (dwm/upload-media-workspace params)))))]
 
     [:li.tooltip.tooltip-right
      {:alt (tr "workspace.toolbar.image" (sc/get-tooltip :insert-image))
@@ -140,4 +141,13 @@
                      (ts/schedule 300 #(st/emit! (dw/remove-layout-flag :textpalette)
                                                  (-> (dw/toggle-layout-flag :colorpalette)
                                                      (vary-meta assoc ::ev/origin "workspace-left-toolbar")))))}
-        i/palette]]]]))
+        i/palette]
+       [:li.tooltip.tooltip-right.separator
+        {:alt (tr "workspace.toolbar.shortcuts" (sc/get-tooltip :show-shortcuts))
+         :class (when (contains? layout :shortcuts) "selected")
+         :on-click (fn []
+                     (let [is-sidebar-closed? (contains? layout :collapse-left-sidebar)]
+                       (ts/schedule 300 #(st/emit! (when is-sidebar-closed? (dw/toggle-layout-flag :collapse-left-sidebar))
+                                                   (-> (dw/toggle-layout-flag :shortcuts)
+                                                       (vary-meta assoc ::ev/origin "workspace-left-toolbar"))))))}
+        i/shortcut]]]]))

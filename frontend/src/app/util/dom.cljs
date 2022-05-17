@@ -10,8 +10,10 @@
    [app.common.data.macros :as dm]
    [app.common.geom.point :as gpt]
    [app.common.logging :as log]
+   [app.common.media :as cm]
    [app.util.globals :as globals]
    [app.util.object :as obj]
+   [app.util.webapi :as wapi]
    [cuerdas.core :as str]
    [goog.dom :as dom]
    [promesa.core :as p]))
@@ -42,6 +44,12 @@
 (defn set-html-title
   [^string title]
   (set! (.-title globals/document) title))
+
+(defn set-html-theme-color
+  [^string color scheme]
+  (let [meta-node (.querySelector js/document "meta[name='theme-color']")]
+    (.setAttribute meta-node "content" color)
+    (.setAttribute meta-node "media" (str/format "(prefers-color-scheme: %s)" scheme))))
 
 (defn set-page-style!
   [styles]
@@ -127,7 +135,17 @@
   (when (some? node)
     (.getAttribute ^js node attr-name)))
 
+(defn get-scroll-position
+  [^js event]
+  (when (some? event)
+      {:scroll-height (.-scrollHeight event)
+       :scroll-left   (.-scrollLeft event)
+       :scroll-top    (.-scrollTop event)
+       :scroll-width  (.-scrollWidth event)}))
+
 (def get-target-val (comp get-value get-target))
+
+(def get-target-scroll (comp get-scroll-position get-target))
 
 (defn click
   "Click a node"
@@ -313,39 +331,46 @@
       (log/error :msg "Seems like the current browser does not support fullscreen api.")
       false)))
 
-(defn ^boolean blob?
+(defn blob?
   [^js v]
   (when (some? v)
     (instance? js/Blob v)))
 
-(defn create-blob
-  "Create a blob from content."
-  ([content]
-   (create-blob content "application/octet-stream"))
-  ([content mimetype]
-   (js/Blob. #js [content] #js {:type mimetype})))
+(defn make-node
+  ([namespace name]
+   (.createElementNS globals/document namespace name))
 
-(defn revoke-uri
-  [url]
-  (js/URL.revokeObjectURL url))
+  ([name]
+   (.createElement globals/document name)))
 
-(defn create-uri
-  "Create a url from blob."
-  [b]
-  {:pre [(blob? b)]}
-  (js/URL.createObjectURL b))
+(defn node->xml
+  [node]
+  (->  (js/XMLSerializer.)
+       (.serializeToString node)))
+
+(defn svg->data-uri
+  [svg]
+  (assert (string? svg))
+  (let [b64 (-> svg
+                js/encodeURIComponent
+                js/unescape
+                js/btoa)]
+    (dm/str "data:image/svg+xml;base64," b64)))
 
 (defn set-property! [^js node property value]
   (when (some? node)
-    (.setAttribute node property value)))
+    (.setAttribute node property value))
+  node)
 
 (defn set-text! [^js node text]
   (when (some? node)
-    (set! (.-textContent node) text)))
+    (set! (.-textContent node) text))
+  node)
 
 (defn set-css-property! [^js node property value]
   (when (some? node)
-    (.setProperty (.-style ^js node) property value)))
+    (.setProperty (.-style ^js node) property value))
+  node)
 
 (defn capture-pointer [^js event]
   (when (some? event)
@@ -376,7 +401,8 @@
 (defn add-class! [^js node class-name]
   (when (some? node)
     (let [class-list (.-classList ^js node)]
-      (.add ^js class-list class-name))))
+      (.add ^js class-list class-name)))
+  node)
 
 (defn remove-class! [^js node class-name]
   (when (some? node)
@@ -400,21 +426,6 @@
 (defn get-data [^js node ^string attr]
   (when (some? node)
     (.getAttribute node (str "data-" attr))))
-
-(defn mtype->extension [mtype]
-  ;; https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types
-  (case mtype
-    "image/apng"         ".apng"
-    "image/avif"         ".avif"
-    "image/gif"          ".gif"
-    "image/jpeg"         ".jpg"
-    "image/png"          ".png"
-    "image/svg+xml"      ".svg"
-    "image/webp"         ".webp"
-    "application/zip"    ".zip"
-    "application/penpot" ".penpot"
-    "application/pdf"    ".pdf"
-    nil))
 
 (defn set-attribute! [^js node ^string attr value]
   (when (some? node)
@@ -466,7 +477,7 @@
 (defn trigger-download-uri
   [filename mtype uri]
   (let [link      (create-element "a")
-        extension (mtype->extension mtype)
+        extension (cm/mtype->extension mtype)
         filename  (if (and extension (not (str/ends-with? filename extension)))
                     (str/concat filename extension)
                     filename)]
@@ -479,14 +490,14 @@
 
 (defn trigger-download
   [filename blob]
-  (trigger-download-uri filename (.-type ^js blob) (create-uri blob)))
+  (trigger-download-uri filename (.-type ^js blob) (wapi/create-uri blob)))
 
 (defn save-as
   [uri filename mtype description]
 
   ;; Only chrome supports the save dialog
   (if (obj/contains? globals/window "showSaveFilePicker")
-    (let [extension (mtype->extension mtype)
+    (let [extension (cm/mtype->extension mtype)
           opts {:suggestedName (str filename "." extension)
                 :types [{:description description
                          :accept { mtype [(str "." extension)]}}]}]

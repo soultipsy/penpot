@@ -234,7 +234,8 @@
              :xmlns:penpot (when include-metadata? "https://penpot.app/xmlns")
              :style {:width "100%"
                      :height "100%"
-                     :background bgcolor}}
+                     :background bgcolor}
+             :fill "none"}
 
        (when include-metadata?
          [:& export/export-page {:options (:options data)}])
@@ -242,8 +243,9 @@
 
        (let [shapes (->> shapes
                          (remove cph/frame-shape?)
-                         (mapcat #(cph/get-children-with-self objects (:id %))))]
-         [:& ff/fontfaces-style {:shapes shapes}])
+                         (mapcat #(cph/get-children-with-self objects (:id %))))
+             fonts (ff/shapes->fonts shapes)]
+         [:& ff/fontfaces-style {:fonts fonts}])
 
        (for [item shapes]
          (let [frame? (= (:type item) :frame)]
@@ -300,7 +302,8 @@
            :version "1.1"
            :xmlns "http://www.w3.org/2000/svg"
            :xmlnsXlink "http://www.w3.org/1999/xlink"
-           :xmlns:penpot (when include-metadata? "https://penpot.app/xmlns")}
+           :xmlns:penpot (when include-metadata? "https://penpot.app/xmlns")
+           :fill "none"}
      (if (or (not show-thumbnails?) (nil? (:thumbnail frame)))
        [:& wrapper {:shape frame :view-box vbox}]
 
@@ -352,26 +355,23 @@
            :version "1.1"
            :xmlns "http://www.w3.org/2000/svg"
            :xmlnsXlink "http://www.w3.org/1999/xlink"
-           :xmlns:penpot (when include-metadata? "https://penpot.app/xmlns")}
+           :xmlns:penpot (when include-metadata? "https://penpot.app/xmlns")
+           :fill "none"}
 
      [:> shape-container {:shape group}
       [:& group-wrapper {:shape group :view-box vbox}]]]))
 
 (mf/defc object-svg
   {::mf/wrap [mf/memo]}
-  [{:keys [objects object zoom render-texts? render-embed?]
-    :or {zoom 1 render-embed? false}
+  [{:keys [objects object-id render-texts? render-embed?]
+    :or {render-embed? false}
     :as props}]
-  (let [object (cond-> object
+  (let [object  (get objects object-id)
+        object (cond-> object
                  (:hide-fill-on-export object)
                  (assoc :fills []))
 
-        obj-id (:id object)
-        x      (* (:x object) zoom)
-        y      (* (:y object) zoom)
-        width  (* (:width object) zoom)
-        height (* (:height object) zoom)
-
+        {:keys [x y width height]}  (get-object-bounds objects object-id)
         vbox   (dm/str x " " y " " width " " height)
 
         frame-wrapper
@@ -390,7 +390,7 @@
         render-texts? (and render-texts? (d/seek (comp nil? :position-data) text-shapes))]
 
     [:& (mf/provider embed/context) {:value render-embed?}
-     [:svg {:id (dm/str "screenshot-" obj-id)
+     [:svg {:id (dm/str "screenshot-" object-id)
             :view-box vbox
             :width width
             :height height
@@ -399,10 +399,11 @@
             :xmlnsXlink "http://www.w3.org/1999/xlink"
             ;; Fix Chromium bug about color of html texts
             ;; https://bugs.chromium.org/p/chromium/issues/detail?id=1244560#c5
-            :style {:-webkit-print-color-adjust :exact}}
+            :style {:-webkit-print-color-adjust :exact}
+            :fill "none"}
 
-      (let [shapes (cph/get-children objects obj-id)]
-        [:& ff/fontfaces-style {:shapes shapes}])
+      (let [fonts (ff/frame->fonts object objects)]
+        [:& ff/fontfaces-style {:fonts fonts}])
 
       (case (:type object)
         :frame [:& frame-wrapper {:shape object :view-box vbox}]
@@ -421,7 +422,8 @@
             :height (:height object)
             :version "1.1"
             :xmlns "http://www.w3.org/2000/svg"
-            :xmlnsXlink "http://www.w3.org/1999/xlink"}
+            :xmlnsXlink "http://www.w3.org/1999/xlink"
+            :fill "none"}
            [:& shape-wrapper {:shape (assoc object :x 0 :y 0)}]]]))]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -464,7 +466,8 @@
              :xmlns "http://www.w3.org/2000/svg"
              :xmlnsXlink "http://www.w3.org/1999/xlink"
              :xmlns:penpot (when include-metadata? "https://penpot.app/xmlns")
-             :style {:display (when-not (some? children) "none")}}
+             :style {:display (when-not (some? children) "none")}
+             :fill "none"}
        [:defs
         (for [[id data] (:components data)]
           [:& component-symbol {:id id :key (dm/str id) :data data}])]

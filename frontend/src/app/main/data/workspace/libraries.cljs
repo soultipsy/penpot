@@ -18,6 +18,8 @@
    [app.common.spec.file :as spec.file]
    [app.common.spec.typography :as spec.typography]
    [app.common.uuid :as uuid]
+   [app.main.data.dashboard :as dd]
+   [app.main.data.events :as ev]
    [app.main.data.messages :as dm]
    [app.main.data.workspace.changes :as dch]
    [app.main.data.workspace.common :as dwc]
@@ -31,10 +33,13 @@
    [app.util.router :as rt]
    [app.util.time :as dt]
    [beicon.core :as rx]
+   [cljs.spec.alpha :as s]
    [potok.core :as ptk]))
 
 ;; Change this to :info :debug or :trace to debug this module, or :warn to reset to default
 (log/set-level! :warn)
+
+(s/def ::file ::dd/file)
 
 (defn- log-changes
   [changes file]
@@ -121,6 +126,19 @@
     (update [_ state]
       (assoc-in state [:workspace-local :color-for-rename] nil))))
 
+(defn- do-update-color
+  [it state color file-id]
+  (let [data        (get state :workspace-data)
+        [path name] (cph/parse-path-name (:name color))
+        color       (assoc color :path path :name name)
+        changes     (-> (pcb/empty-changes it)
+                        (pcb/with-library-data data)
+                        (pcb/update-color color))]
+    (rx/of (dwu/start-undo-transaction)
+           (dch/commit-changes changes)
+           (sync-file (:current-file-id state) file-id)
+           (dwu/commit-undo-transaction))))
+
 (defn update-color
   [color file-id]
   (us/assert ::spec.color/color color)
@@ -128,16 +146,20 @@
   (ptk/reify ::update-color
     ptk/WatchEvent
     (watch [it state _]
+      (do-update-color it state color file-id))))
+
+(defn rename-color
+  [file-id id new-name]
+  (us/assert ::us/uuid file-id)
+  (us/assert ::us/uuid id)
+  (us/assert ::us/string new-name)
+  (ptk/reify ::rename-color
+    ptk/WatchEvent
+    (watch [it state _]
       (let [data        (get state :workspace-data)
-            [path name] (cph/parse-path-name (:name color))
-            color       (assoc color :path path :name name)
-            changes     (-> (pcb/empty-changes it)
-                            (pcb/with-library-data data)
-                            (pcb/update-color color))]
-        (rx/of (dwu/start-undo-transaction)
-               (dch/commit-changes changes)
-               (sync-file (:current-file-id state) file-id)
-               (dwu/commit-undo-transaction))))))
+            object      (get-in data [:colors id])
+            new-object  (assoc object :name new-name)]
+        (do-update-color it state new-object file-id)))))
 
 (defn delete-color
   [{:keys [id] :as params}]
@@ -178,6 +200,7 @@
                             (pcb/update-media new-object))]
         (rx/of (dch/commit-changes changes))))))
 
+
 (defn delete-media
   [{:keys [id] :as params}]
   (us/assert ::us/uuid id)
@@ -208,6 +231,17 @@
                      edit?
                      (assoc-in [:workspace-global :rename-typography] (:id typography))))))))))
 
+(defn- do-update-tipography
+  [it state typography file-id]
+  (let [data    (get state :workspace-data)
+        changes (-> (pcb/empty-changes it)
+                    (pcb/with-library-data data)
+                    (pcb/update-typography typography))]
+    (rx/of (dwu/start-undo-transaction)
+           (dch/commit-changes changes)
+           (sync-file (:current-file-id state) file-id)
+           (dwu/commit-undo-transaction))))
+
 (defn update-typography
   [typography file-id]
   (us/assert ::spec.typography/typography typography)
@@ -215,14 +249,22 @@
   (ptk/reify ::update-typography
     ptk/WatchEvent
     (watch [it state _]
+      (do-update-tipography it state typography file-id))))
+
+(defn rename-typography
+  [file-id id new-name]
+  (us/assert ::us/uuid file-id)
+  (us/assert ::us/uuid id)
+  (us/assert ::us/string new-name)
+  (ptk/reify ::rename-typography
+    ptk/WatchEvent
+    (watch [it state _]
       (let [data    (get state :workspace-data)
-            changes (-> (pcb/empty-changes it)
-                        (pcb/with-library-data data)
-                        (pcb/update-typography typography))]
-        (rx/of (dwu/start-undo-transaction)
-               (dch/commit-changes changes)
-               (sync-file (:current-file-id state) file-id)
-               (dwu/commit-undo-transaction))))))
+            [path name] (cph/parse-path-name new-name)
+            object  (get-in data [:typographies id])
+            new-object  (assoc object :path path :name name)]
+        (do-update-tipography it state new-object file-id)))))
+
 
 (defn delete-typography
   [id]
@@ -290,7 +332,7 @@
                 (-> component
                     (assoc :path path)
                     (assoc :name name)
-                    (update :objects 
+                    (update :objects
                             ;; Give the same name to the root shape
                             #(assoc-in % [id :name] name)))))
 
@@ -673,3 +715,70 @@
                   :callback do-dismiss}]
                 :sync-dialog))))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Backend interactions
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn set-file-shared
+  [id is-shared]
+  {:pre [(uuid? id) (boolean? is-shared)]}
+  (ptk/reify ::set-file-shared
+    IDeref
+    (-deref [_]
+      {::ev/origin "workspace" :id id :shared is-shared})
+
+    ptk/UpdateEvent
+    (update [_ state]
+      (assoc-in state [:workspace-file :is-shared] is-shared))
+
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (let [params {:id id :is-shared is-shared}]
+        (->> (rp/mutation :set-file-shared params)
+             (rx/ignore))))))
+
+(defn- shared-files-fetched
+  [files]
+  (us/verify (s/every ::file) files)
+  (ptk/reify ::shared-files-fetched
+    ptk/UpdateEvent
+    (update [_ state]
+      (let [state (dissoc state :files)]
+        (assoc state :workspace-shared-files files)))))
+
+(defn fetch-shared-files
+  [{:keys [team-id] :as params}]
+  (us/assert ::us/uuid team-id)
+  (ptk/reify ::fetch-shared-files
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (->> (rp/query :team-shared-files {:team-id team-id})
+           (rx/map shared-files-fetched)))))
+
+;; --- Link and unlink Files
+
+(defn link-file-to-library
+  [file-id library-id]
+  (ptk/reify ::attach-library
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (let [fetched #(assoc-in %2 [:workspace-libraries (:id %1)] %1)
+            params  {:file-id file-id
+                     :library-id library-id}]
+        (->> (rp/mutation :link-file-to-library params)
+             (rx/mapcat #(rp/query :file {:id library-id}))
+             (rx/map #(partial fetched %)))))))
+
+(defn unlink-file-from-library
+  [file-id library-id]
+  (ptk/reify ::detach-library
+    ptk/UpdateEvent
+    (update [_ state]
+      (d/dissoc-in state [:workspace-libraries library-id]))
+
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (let [params {:file-id file-id
+                    :library-id library-id}]
+        (->> (rp/mutation :unlink-file-from-library params)
+             (rx/ignore))))))

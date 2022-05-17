@@ -77,8 +77,8 @@
 
 (defn get-nodes
   "Retrieve the DOM nodes to apply the matrix transformation"
-  [{:keys [id type masked-group?]}]
-  (let [shape-node (dom/get-element (str "shape-" id))
+  [base-node {:keys [id type masked-group?]}]
+  (let [shape-node (dom/query base-node (str "#shape-" id))
 
         frame? (= :frame type)
         group? (= :group type)
@@ -86,12 +86,12 @@
         mask?  (and group? masked-group?)
 
         ;; When the shape is a frame we maybe need to move its thumbnail
-        thumb-node (when frame? (dom/get-element (str "thumbnail-" id)))]
+        thumb-node (when frame? (dom/query (str "#thumbnail-" id)))]
 
     (cond
       frame?
       [thumb-node
-       (dom/query shape-node ".frame-background")
+       (dom/get-parent (dom/query shape-node ".frame-background"))
        (dom/query shape-node ".frame-clip")]
 
       ;; For groups we don't want to transform the whole group but only
@@ -108,10 +108,7 @@
 
       text?
       [shape-node
-       (dom/query shape-node "foreignObject")
-       (dom/query shape-node ".text-shape")
-       (dom/query shape-node ".text-svg")
-       (dom/query shape-node ".text-clip")]
+       (dom/query shape-node ".text-shape")]
 
       :else
       [shape-node])))
@@ -132,9 +129,9 @@
     (dom/set-attribute! node "height" height)))
 
 (defn start-transform!
-  [shapes]
+  [base-node shapes]
   (doseq [shape shapes]
-    (when-let [nodes (get-nodes shape)]
+    (when-let [nodes (get-nodes base-node shape)]
       (doseq [node nodes]
         (let [old-transform (dom/get-attribute node "transform")]
           (when (some? old-transform)
@@ -153,10 +150,14 @@
 
           (when (or (= (dom/get-tag-name node) "mask")
                     (= (dom/get-tag-name node) "filter"))
-            (dom/set-attribute! node "data-old-x" (dom/get-attribute node "x"))
-            (dom/set-attribute! node "data-old-y" (dom/get-attribute node "y"))
-            (dom/set-attribute! node "data-old-width" (dom/get-attribute node "width"))
-            (dom/set-attribute! node "data-old-height" (dom/get-attribute node "height"))))))))
+            (let [old-x (dom/get-attribute node "x")
+                  old-y (dom/get-attribute node "y")
+                  old-width (dom/get-attribute node "width")
+                  old-height (dom/get-attribute node "height")]
+              (dom/set-attribute! node "data-old-x" old-x)
+              (dom/set-attribute! node "data-old-y" old-y)
+              (dom/set-attribute! node "data-old-width" old-width)
+              (dom/set-attribute! node "data-old-height" old-height))))))))
 
 (defn set-transform-att!
   [node att value]
@@ -168,36 +169,23 @@
     (dom/set-attribute! node att (str new-value))))
 
 (defn update-transform!
-  [shapes transforms modifiers]
+  [base-node shapes transforms modifiers]
   (doseq [{:keys [id type] :as shape} shapes]
-    (when-let [nodes (get-nodes shape)]
+    (when-let [nodes (get-nodes base-node shape)]
       (let [transform (get transforms id)
             modifiers (get-in modifiers [id :modifiers])
 
-            [text-transform text-width text-height]
+            [text-transform _text-width _text-height]
             (when (= :text type)
-              (text-corrected-transform shape transform modifiers))
-
-            text-width (str text-width)
-            text-height (str text-height)]
+              (text-corrected-transform shape transform modifiers))]
 
         (doseq [node nodes]
           (cond
             ;; Text shapes need special treatment because their resize only change
             ;; the text area, not the change size/position
-            (or (dom/class? node "text-shape")
-                (dom/class? node "text-svg"))
+            (dom/class? node "text-shape")
             (when (some? text-transform)
               (set-transform-att! node "transform" text-transform))
-
-            (or (= (dom/get-tag-name node) "foreignObject")
-                (dom/class? node "text-clip"))
-            (let [cur-width (dom/get-attribute node "width")
-                  cur-height (dom/get-attribute node "height")]
-              (when (and (some? text-width) (not= cur-width text-width))
-                (dom/set-attribute! node "width" text-width))
-              (when (and (some? text-height) (not= cur-height text-height))
-                (dom/set-attribute! node "height" text-height)))
 
             (or (= (dom/get-tag-name node) "mask")
                 (= (dom/get-tag-name node) "filter"))
@@ -214,9 +202,9 @@
             (set-transform-att! node "transform" transform)))))))
 
 (defn remove-transform!
-  [shapes]
+  [base-node shapes]
   (doseq [shape shapes]
-    (when-let [nodes (get-nodes shape)]
+    (when-let [nodes (get-nodes base-node shape)]
       (doseq [node nodes]
         (when (some? node)
           (cond
@@ -224,9 +212,17 @@
             ;; The shape width/height will be automaticaly setup when the modifiers are applied
             nil
 
+            (or (= (dom/get-tag-name node) "mask")
+                (= (dom/get-tag-name node) "filter"))
+            (do
+              (dom/remove-attribute! node "data-old-x")
+              (dom/remove-attribute! node "data-old-y")
+              (dom/remove-attribute! node "data-old-width")
+              (dom/remove-attribute! node "data-old-height"))
+
             :else
             (let [old-transform (dom/get-attribute node "data-old-transform")]
-              (when-not (some? old-transform)
+              (if (some? old-transform)
                 (dom/remove-attribute! node "data-old-transform")
                 (dom/remove-attribute! node "transform")))))))))
 

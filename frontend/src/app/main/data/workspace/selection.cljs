@@ -21,6 +21,7 @@
    [app.main.data.workspace.changes :as dch]
    [app.main.data.workspace.common :as dwc]
    [app.main.data.workspace.state-helpers :as wsh]
+   [app.main.data.workspace.thumbnails :as dwt]
    [app.main.data.workspace.zoom :as dwz]
    [app.main.refs :as refs]
    [app.main.streams :as ms]
@@ -273,6 +274,7 @@
 (declare prepare-duplicate-frame-change)
 (declare prepare-duplicate-shape-change)
 (declare prepare-duplicate-flows)
+(declare prepare-duplicate-guides)
 
 (defn prepare-duplicate-changes
   "Prepare objects to duplicate: generate new id, give them unique names,
@@ -301,7 +303,9 @@
                                                 delta)
                      init-changes))]
 
-    (prepare-duplicate-flows changes shapes page ids-map)))
+    (-> changes
+        (prepare-duplicate-flows shapes page ids-map)
+        (prepare-duplicate-guides shapes page ids-map delta))))
 
 (defn- prepare-duplicate-change
   [changes objects page unames update-unames! ids-map shape delta]
@@ -361,20 +365,20 @@
           changes (-> (pcb/add-object changes new-obj {:ignore-touched true})
                       (pcb/amend-last-change #(assoc % :old-id (:id obj))))]
 
-          (reduce (fn [changes child]
-                    (prepare-duplicate-shape-change changes
-                                                    objects
-                                                    page
-                                                    unames
-                                                    update-unames!
-                                                    ids-map
-                                                    child
-                                                    delta
-                                                    frame-id
-                                                    new-id))
-                  changes
-                  (map (d/getf objects) (:shapes obj))))
-      changes))
+      (reduce (fn [changes child]
+                (prepare-duplicate-shape-change changes
+                                                objects
+                                                page
+                                                unames
+                                                update-unames!
+                                                ids-map
+                                                child
+                                                delta
+                                                frame-id
+                                                new-id))
+              changes
+              (map (d/getf objects) (:shapes obj))))
+    changes))
 
 (defn- prepare-duplicate-flows
   [changes shapes page ids-map]
@@ -397,6 +401,35 @@
                              frames-with-flow))]
         (pcb/update-page-option changes :flows update-flows))
       changes)))
+
+(defn- prepare-duplicate-guides
+  [changes shapes page ids-map delta]
+  (let [guides (get-in page [:options :guides])
+        frames (->> shapes
+                    (filter #(= (:type %) :frame)))
+        new-guides (reduce
+                    (fn [g frame]
+                      (let [new-id     (ids-map (:id frame))
+                            new-frame  (-> frame
+                                           (geom/move delta))
+                            new-guides (->> guides
+                                            (vals)
+                                            (filter #(= (:frame-id %) (:id frame)))
+                                            (map #(-> %
+                                                      (assoc :id (uuid/next))
+                                                      (assoc :frame-id new-id)
+                                                      (assoc :position (if (= (:axis %) :x)
+                                                                         (+ (:position %) (- (:x new-frame) (:x frame)))
+                                                                         (+ (:position %) (- (:y new-frame) (:y frame))))))))]
+
+                        (if-not (empty? new-guides)
+                          (conj g
+                                (into {} (map (juxt :id identity) new-guides)))
+                          {})))
+                    guides
+                    frames)]
+    (-> (pcb/with-page changes page)
+        (pcb/set-page-option :guides new-guides))))
 
 (defn duplicate-changes-update-indices
   "Updates the changes to correctly set the indexes of the duplicated objects,
@@ -495,18 +528,30 @@
 
                   id-original     (first selected)
 
-                  selected        (->> changes
+                  new-selected    (->> changes
                                        :redo-changes
                                        (filter #(= (:type %) :add-obj))
                                        (filter #(selected (:old-id %)))
                                        (map #(get-in % [:obj :id]))
                                        (into (d/ordered-set)))
 
-                  id-duplicated   (first selected)]
+                  dup-frames      (->> changes
+                                       :redo-changes
+                                       (filter #(= (:type %) :add-obj))
+                                       (filter #(selected (:old-id %)))
+                                       (filter #(= :frame (get-in % [:obj :type])))
+                                       (map #(vector (:old-id %) (get-in % [:obj :id]))))
+
+                  id-duplicated   (first new-selected)]
+
+              (rx/concat
+               (->> (rx/from dup-frames)
+                    (rx/map (fn [[old-id new-id]] (dwt/duplicate-thumbnail old-id new-id))))
+
                ;; Warning: This order is important for the focus mode.
-              (rx/of (dch/commit-changes changes)
-                     (select-shapes selected)
-                     (memorize-duplicated id-original id-duplicated)))))))))
+               (rx/of (dch/commit-changes changes)
+                      (select-shapes new-selected)
+                      (memorize-duplicated id-original id-duplicated))))))))))
 
 (defn change-hover-state
   [id value]

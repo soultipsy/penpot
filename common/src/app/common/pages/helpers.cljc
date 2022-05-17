@@ -7,6 +7,7 @@
 (ns app.common.pages.helpers
   (:require
    [app.common.data :as d]
+   [app.common.data.macros :as dm]
    [app.common.geom.shapes :as gsh]
    [app.common.spec :as us]
    [app.common.spec.page :as spec.page]
@@ -92,7 +93,7 @@
   "Returns a vector of parents of the specified shape."
   [objects shape-id]
   (loop [result [] id shape-id]
-    (if-let [parent-id (->> id (get objects) :parent-id)]
+    (if-let [parent-id (dm/get-in objects [id :parent-id])]
       (recur (conj result parent-id) parent-id)
       result)))
 
@@ -138,6 +139,18 @@
      (->> (lookup shape-id)
           (:shapes)
           (keep lookup)))))
+
+(defn get-frames-ids
+  "Retrieves all frame objects as vector. It is not implemented in
+  function of `get-immediate-children` for performance reasons. This
+  function is executed in the render hot path."
+  [objects]
+  (let [lookup (d/getf objects)
+        xform  (comp (keep lookup)
+                     (filter frame-shape?)
+                     (map :id))]
+    (->> (:shapes (lookup uuid/zero))
+         (into [] xform))))
 
 (defn get-frames
   "Retrieves all frame objects as vector. It is not implemented in
@@ -468,3 +481,42 @@
   (let [path-split (split-path path)]
     (merge-path-item (first path-split) name)))
 
+
+(defn get-frame-objects
+  "Retrieves a new objects map only with the objects under frame-id (with frame-id)"
+  [objects frame-id]
+  (let [ids (concat [frame-id] (get-children-ids objects frame-id))]
+    (select-keys objects ids)))
+
+(defn objects-by-frame
+  "Returns a map of the `objects` grouped by frame. Every value of the map has
+  the same format as objects id->shape-data"
+  [objects]
+  ;; Implemented with transients for performance. 30~50% better
+  (letfn [(process-shape [objects [id shape]]
+            (let [frame-id (if (= :frame (:type shape)) id (:frame-id shape))
+                  cur (-> (or (get objects frame-id) (transient {}))
+                          (assoc! id shape))]
+              (assoc! objects frame-id cur)))]
+    (d/update-vals
+     (->> objects
+          (reduce process-shape (transient {}))
+          (persistent!))
+     persistent!)))
+
+(defn selected-subtree
+  "Given a set of shapes, returns an objects subtree with the parents
+  of the selected items up to the root. Useful to calculate a partial z-index"
+  [objects selected]
+
+  (let [selected+parents
+        (into selected
+              (mapcat #(get-parent-ids objects %))
+              selected)
+
+        remove-children
+        (fn [shape]
+          (update shape :shapes #(filterv selected+parents %)))]
+
+    (-> (select-keys objects selected+parents)
+        (d/update-vals remove-children))))

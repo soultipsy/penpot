@@ -12,11 +12,11 @@
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes.path :as gpa]
    [app.common.logging :as log]
+   [app.common.media :as cm]
    [app.common.pages :as cp]
    [app.common.text :as ct]
    [app.common.uuid :as uuid]
    [app.main.repo :as rp]
-   [app.util.dom :as dom]
    [app.util.http :as http]
    [app.util.import.parser :as cip]
    [app.util.json :as json]
@@ -49,7 +49,7 @@
                 :colors       (str file-id "/colors.json")
                 :typographies (str file-id "/typographies.json")
                 :media-list   (str file-id "/media.json")
-                :media        (let [ext (dom/mtype->extension (:mtype media))]
+                :media        (let [ext (cm/mtype->extension (:mtype media))]
                                 (str/concat file-id "/media/" id ext))
                 :components   (str file-id "/components.svg"))
 
@@ -344,7 +344,13 @@
                       (assoc :id (resolve page-id)))
         flows     (->> (get-in page-data [:options :flows])
                        (mapv #(update % :starting-frame resolve)))
-        page-data (d/assoc-in-when page-data [:options :flows] flows)
+
+        guides    (-> (get-in page-data [:options :guides])
+                      (d/update-vals #(update % :frame-id resolve)))
+
+        page-data (-> page-data
+                      (d/assoc-in-when [:options :flows] flows)
+                      (d/assoc-in-when [:options :guides] guides))
         file      (-> file (fb/add-page page-data))
 
         ;; Preprocess nodes to parallel upload the images. Store the result in a table
